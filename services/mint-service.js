@@ -21,7 +21,7 @@ class MintService {
 
         this.tokenId = process.env.TOKEN_ID;
         this.treasuryId = process.env.OPERATOR_ID;
-        this.metadataDir = path.join(__dirname, '..', 'metadata');
+        //this.metadataDir = path.join(__dirname, '..', 'metadata');
 
         // Services
         this.tierService = new TierServiceCategorized();
@@ -188,7 +188,7 @@ class MintService {
 
             // Prepare metadata bytes - STORE IPFS URL, not just token ID
             const allMetadataBytes = [];
-            const METADATA_CID = "bafybeiaa7g25quq7uvaw7s5x2sxalhv6dzkuvviwvqi54oxzhyeo3by7zu";
+            const METADATA_CID = "bafybeibx4xw6e6r2x5trv4lskhtjqs2y2qfgmajbf6c3k6oohcsmv2cuwu";
 
             for (let i = 0; i < metadataTokenIds.length; i++) {
                 const tokenId = metadataTokenIds[i];
@@ -337,7 +337,7 @@ class MintService {
             // 1. Fetch from IPFS (recommended for production)
             // 2. Load from local files (for testing)
 
-            const METADATA_CID = "bafybeiaa7g25quq7uvaw7s5x2sxalhv6dzkuvviwvqi54oxzhyeo3by7zu";
+            const METADATA_CID = "bafybeibx4xw6e6r2x5trv4lskhtjqs2y2qfgmajbf6c3k6oohcsmv2cuwu";
             const metadataUrl = `https://ipfs.io/ipfs/${METADATA_CID}/${tokenId}.json`;
 
             console.log(`📄 Fetching metadata from IPFS: ${metadataUrl}`);
@@ -353,16 +353,6 @@ class MintService {
         } catch (error) {
             console.error(`Failed to load metadata for token ${tokenId}:`, error.message);
 
-            // Fallback: Try local file
-            try {
-                const metadataPath = path.join(this.metadataDir, `${tokenId}.json`);
-                const metadataContent = await fs.readFile(metadataPath, 'utf8');
-                const metadata = JSON.parse(metadataContent);
-                console.log(`✅ Loaded metadata from local file for token ${tokenId}`);
-                return metadata;
-            } catch (localError) {
-                throw new Error(`Failed to load metadata for token ${tokenId} from both IPFS and local: ${error.message}`);
-            }
         }
     }
 
@@ -548,13 +538,13 @@ class MintService {
                     console.warn(`⚠️ Could not fetch metadata from URI, using fallback`);
                     originalMetadata = {
                         name: `Odin #${tokenId}`,
-                        description: `Odin Genesis NFT #${tokenId}`,
+                        description: `Odin #${tokenId}`,
                         image: `https://bafybeigivsxoo6htxkfet4itznymlsgfjxcbhiakxutugeg2c2ypmknouq.ipfs.w3s.link/${tokenId}.png`
                     };
                 }
             } else {
                 // Default IPFS metadata
-                const METADATA_CID = "bafybeiaa7g25quq7uvaw7s5x2sxalhv6dzkuvviwvqi54oxzhyeo3by7zu";
+                const METADATA_CID = "bafybeibx4xw6e6r2x5trv4lskhtjqs2y2qfgmajbf6c3k6oohcsmv2cuwu";
                 metadataUri = `ipfs://${METADATA_CID}/${tokenId}.json`;
 
                 console.log(`📄 Fetching from IPFS: ${metadataUri}`);
@@ -571,16 +561,7 @@ class MintService {
                 } catch (ipfsError) {
                     console.error(`❌ IPFS fetch failed:`, ipfsError.message);
 
-                    // Fallback to local file
-                    try {
-                        const metadataPath = path.join(this.metadataDir, `${tokenId}.json`);
-                        const metadataContent = await fs.readFile(metadataPath, 'utf8');
-                        originalMetadata = JSON.parse(metadataContent);
-                        console.log(`✅ Metadata loaded from local file`);
-                    } catch (localError) {
-                        console.error(`❌ Local file also failed:`, localError.message);
-                        throw new Error(`Failed to load metadata for token ${tokenId}`);
-                    }
+                    
                 }
             }
 
