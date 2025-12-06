@@ -9,11 +9,16 @@
     "test": "node tests/test-metadata-loading.js",
     "assign-tiers": "node tools/tier-admin-tool.js"
   },
-  "keywords": ["hedera", "nft", "odin"],
+  "keywords": [
+    "hedera",
+    "nft",
+    "odin"
+  ],
   "author": "Your Name",
   "license": "ISC",
   "dependencies": {
     "@hashgraph/sdk": "^2.49.2",
+    "@octokit/rest": "^22.0.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2"
