@@ -41,9 +41,9 @@ class MintService {
 
         // Pricing in HBAR
         this.pricing = {
-            common: new Hbar(1), //1400
-            rare: new Hbar(2), //7200
-            legendary: new Hbar(3) //22000
+            common: new Hbar(1400), //1400
+            rare: new Hbar(7200), //7200
+            legendary: new Hbar(22000) //22000
         };
 
         this.loadMintingHistory();
