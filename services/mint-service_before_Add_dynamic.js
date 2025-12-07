@@ -10,8 +10,6 @@ const path = require('path');
 const TierServiceCategorized = require('./tier-service-categorized');
 const PaymentService = require('./payment-service');
 require("dotenv").config();
-const priceService = require('./price-service');
-const mintRecorder = require('./mint-recorder');
 
 class MintService {
     constructor() {
@@ -41,48 +39,15 @@ class MintService {
             legendary: 1000000
         };
 
-        /*
-        this.usdPricing = {
-            common: 100,    // $100
-            rare: 500,      // $500
-            legendary: 1500 // $1500
-        };
-        */
         // Pricing in HBAR
-        this.usdPricing = {
-            common: 0.1,    // $100
-            rare: 0.2,      // $500
-            legendary: 0.3 // $1500
-        };
-
-        // Keep for backward compatibility - will be updated dynamically
-        /*this.pricing = {
-            common: new Hbar(1400),  // Fallback values
-            rare: new Hbar(7200),
-            legendary: new Hbar(22000)
-        };*/
-
         this.pricing = {
-            common: new Hbar(1),  // Fallback values
-            rare: new Hbar(2),
-            legendary: new Hbar(3)
+            common: new Hbar(1400), //1400
+            rare: new Hbar(7200), //7200
+            legendary: new Hbar(22000) //22000
         };
-
 
         this.loadMintingHistory();
         console.log('✅ MintService initialized');
-    }
-
-    async getDynamicPricing() {
-        return await priceService.getDynamicPricing();
-    }
-
-    /**
-     * Get HBAR price for a specific rarity
-     */
-    async getHbarPriceForRarity(rarity) {
-        const pricing = await priceService.getDynamicPricing();
-        return pricing.tiers[rarity]?.hbarPrice || 0;
     }
 
     /**
@@ -224,13 +189,12 @@ class MintService {
             // Prepare metadata bytes - STORE IPFS URL, not just token ID
             const allMetadataBytes = [];
             const METADATA_CID = "bafybeibx4xw6e6r2x5trv4lskhtjqs2y2qfgmajbf6c3k6oohcsmv2cuwu";
-            let ipfsUrl = '';
 
             for (let i = 0; i < metadataTokenIds.length; i++) {
                 const tokenId = metadataTokenIds[i];
 
                 // Create the IPFS URL
-                ipfsUrl = `ipfs://${METADATA_CID}/${tokenId}.json`;
+                const ipfsUrl = `ipfs://${METADATA_CID}/${tokenId}.json`;
 
                 // Convert to bytes (UTF-8 encoded string)
                 const bytes = Uint8Array.from(Buffer.from(ipfsUrl, 'utf8'));
@@ -282,24 +246,21 @@ class MintService {
 
             console.log(`✅ NFT transferred to ${userAccountId}`);
 
-            console.log('📝 Recording mint to database...');
-
             // Mark as minted
             await this.tierService.markAsMinted(rarity, metadataTokenIds);
- 
-            // ============================================
 
             // Return result WITH IPFS URL
+            const ipfsUrl = `ipfs://${METADATA_CID}/${metadataTokenIds[0]}.json`;
+
             const result = {
                 success: true,
                 tokenId: this.tokenId.toString(),
                 metadataTokenId: metadataTokenIds[0],
                 serialNumber: serialNumber,
                 rarity: rarity,
-                odinAllocation: this.odinAllocation[rarity],
                 transactionId: txResponse.transactionId.toString(),
-                metadataUrl: ipfsUrl,
-                ipfsGatewayUrl: `https://ipfs.io/ipfs/${METADATA_CID}/${metadataTokenIds[0]}.json`
+                metadataUrl: ipfsUrl,  // Include the IPFS URL
+                ipfsGatewayUrl: `https://ipfs.io/ipfs/${METADATA_CID}/${metadataTokenIds[0]}.json`  // For easy access
             };
 
             console.log(`✅ MINTED: Metadata URL: ${ipfsUrl}`);
@@ -600,7 +561,7 @@ class MintService {
                 } catch (ipfsError) {
                     console.error(`❌ IPFS fetch failed:`, ipfsError.message);
 
-
+                    
                 }
             }
 
@@ -792,29 +753,19 @@ class MintService {
     /**
      * Calculate cost for minting
      */
-    async calculateCost(rarity, quantity) {
+    calculateCost(rarity, quantity) {
         const tierBase = rarity.replace('_1of1', '');
-        const dynamicPricing = await priceService.getDynamicPricing();
-        const tierPricing = dynamicPricing.tiers[tierBase];
-
-        if (!tierPricing) {
-            throw new Error(`Invalid rarity: ${rarity}`);
-        }
-
-        const pricePerNFT = tierPricing.hbarPrice;
-        const totalHbar = pricePerNFT * quantity;
+        const pricePerNFT = this.pricing[tierBase];
+        const totalCost = new Hbar(pricePerNFT.toBigNumber().multipliedBy(quantity));
 
         return {
             rarity: rarity,
             quantity: quantity,
-            pricePerNFT: pricePerNFT,
-            pricePerNFTUsd: tierPricing.usdPrice,
-            totalCost: totalHbar,
-            totalCostUsd: tierPricing.usdPrice * quantity,
-            totalHbar: totalHbar,
+            pricePerNFT: pricePerNFT.toString(),
+            totalCost: totalCost.toString(),
+            totalHbar: totalCost.toBigNumber().toNumber(),
             odinPerNFT: this.odinAllocation[tierBase],
-            totalOdin: this.odinAllocation[tierBase] * quantity,
-            hbarUsdRate: dynamicPricing.hbarUsdPrice
+            totalOdin: this.odinAllocation[tierBase] * quantity
         };
     }
 

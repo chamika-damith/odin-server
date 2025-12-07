@@ -16,178 +16,8 @@ const {
 const app = express();
 app.use(cors());
 app.use(express.json());
-const priceService = require('./services/price-service');
-const mintRecorder = require('./services/mint-recorder');
 
 // ==================== MINT ROUTES ====================
-
-// ==================== MINT RECORDS ENDPOINTS ====================
-
-/**
- * Get all mint records
- * GET /api/mint/records
- */
-app.get('/api/mint/records', async (req, res) => {
-    try {
-        const records = mintRecorder.getAllRecords();
-        const stats = mintRecorder.getStatistics();
-
-        res.json({
-            success: true,
-            total: records.length,
-            statistics: stats,
-            records: records
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-/**
- * Get mint records by rarity
- * GET /api/mint/records/rarity/:rarity
- */
-app.get('/api/mint/records/rarity/:rarity', async (req, res) => {
-    try {
-        const { rarity } = req.params;
-        const records = mintRecorder.getRecordsByRarity(rarity);
-
-        res.json({
-            success: true,
-            rarity: rarity,
-            total: records.length,
-            records: records
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-/**
- * Get mint records by owner
- * GET /api/mint/records/owner/:accountId
- */
-app.get('/api/mint/records/owner/:accountId', async (req, res) => {
-    try {
-        const { accountId } = req.params;
-        const records = mintRecorder.getRecordsByOwner(accountId);
-
-        res.json({
-            success: true,
-            owner: accountId,
-            total: records.length,
-            totalOdinAllocated: records.reduce((sum, r) => sum + r.odinAllocation, 0),
-            records: records
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-/**
- * Get mint statistics
- * GET /api/mint/records/statistics
- */
-app.get('/api/mint/records/statistics', async (req, res) => {
-    try {
-        const stats = mintRecorder.getStatistics();
-
-        res.json({
-            success: true,
-            statistics: stats
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-/**
- * Export mint records to CSV
- * GET /api/mint/records/export/csv
- */
-app.get('/api/mint/records/export/csv', async (req, res) => {
-    try {
-        const csvFile = await mintRecorder.exportToCSV();
-
-        if (!csvFile) {
-            return res.status(404).json({
-                success: false,
-                error: 'No records to export'
-            });
-        }
-
-        res.download(csvFile, 'mint-records.csv');
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-/**
- * Search mint records
- * POST /api/mint/records/search
- * Body: { rarity: "common", ownerAccountId: "0.0.1234" }
- */
-app.post('/api/mint/records/search', async (req, res) => {
-    try {
-        const criteria = req.body;
-        const records = mintRecorder.searchRecords(criteria);
-
-        res.json({
-            success: true,
-            criteria: criteria,
-            total: records.length,
-            records: records
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-/**
- * Get specific mint record by serial number
- * GET /api/mint/records/serial/:serialNumber
- */
-app.get('/api/mint/records/serial/:serialNumber', async (req, res) => {
-    try {
-        const serialNumber = parseInt(req.params.serialNumber);
-        const records = mintRecorder.searchRecords({ serialNumber });
-
-        if (records.length === 0) {
-            return res.status(404).json({
-                success: false,
-                error: 'Record not found'
-            });
-        }
-
-        res.json({
-            success: true,
-            record: records[0]
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
 
 /**
  * Step 1: Initiate minting process
@@ -562,50 +392,19 @@ app.post('/api/mint/verify-and-mint', async (req, res) => {
         const amountSentHbar = amountSentTinybars / 100000000;
         const perNFTCost = amountSentHbar / quantity;
 
-        // ============================================
-        // DYNAMIC PRICING VERIFICATION
-        // ============================================
-        console.log('\n💰 STEP 3.5: Verifying payment with dynamic pricing...');
-        console.log('================================================');
+        //const expectedPrices = { common: 14, rare: 72, legendary: 220 };
+        const expectedPrices = { common: 1400, rare: 7200, legendary: 22000 };
+        const expectedPrice = expectedPrices[rarity];
+        const tolerance = expectedPrice * 0.01;
+        const priceDifference = Math.abs(perNFTCost - expectedPrice);
 
-        // Get dynamic pricing from price service
-        const dynamicPricing = await priceService.getDynamicPricing();
-        const expectedPriceHbar = dynamicPricing.tiers[rarity].hbarPrice;
-        const expectedPriceUsd = dynamicPricing.tiers[rarity].usdPrice;
-        const currentHbarRate = dynamicPricing.hbarUsdPrice;
-
-        console.log(`   Current HBAR/USD Rate: $${currentHbarRate}`);
-        console.log(`   Expected Price: $${expectedPriceUsd} = ${expectedPriceHbar} HBAR per NFT`);
-        console.log(`   Amount Sent: ${amountSentHbar} HBAR total`);
-        console.log(`   Per NFT Cost: ${perNFTCost.toFixed(2)} HBAR`);
-
-        // Verify payment with 5% tolerance for price fluctuations
-        const verification = await priceService.verifyPaymentAmount(rarity, perNFTCost, 1);
-
-        console.log(`   Min Acceptable: ${verification.minAcceptable.toFixed(2)} HBAR`);
-        console.log(`   Max Acceptable: ${verification.maxAcceptable.toFixed(2)} HBAR`);
-        console.log(`   Payment Valid: ${verification.isValid}`);
-
-        if (!verification.isValid) {
-            console.log('❌ Payment amount verification failed');
-            console.log('================================================\n');
+        if (priceDifference > tolerance) {
             return res.status(400).json({
                 success: false,
-                error: `Payment amount doesn't match. Expected ~${expectedPriceHbar.toFixed(2)} HBAR per NFT ($${expectedPriceUsd}), got ${perNFTCost.toFixed(2)} HBAR`,
-                details: {
-                    expectedHbarPerNFT: expectedPriceHbar,
-                    expectedUsdPerNFT: expectedPriceUsd,
-                    paidHbarPerNFT: perNFTCost,
-                    totalPaidHbar: amountSentHbar,
-                    currentHbarPrice: currentHbarRate,
-                    tolerance: '5%',
-                    minAcceptable: verification.minAcceptable,
-                    maxAcceptable: verification.maxAcceptable
-                }
+                error: `Payment amount doesn't match. Expected ${expectedPrice} HBAR per NFT, got ${perNFTCost.toFixed(2)} HBAR`
             });
         }
-
-        console.log('   ✅ Price verified with dynamic pricing');
+        console.log('   ✅ Price verified');
         console.log('================================================\n');
 
         // STEP 4: Save transaction hash to prevent reuse
@@ -615,8 +414,6 @@ app.post('/api/mint/verify-and-mint', async (req, res) => {
             rarity,
             quantity,
             amountHbar: amountSentHbar,
-            expectedHbar: expectedPriceHbar * quantity,
-            hbarUsdRate: currentHbarRate,
             timestamp: new Date().toISOString(),
             normalizedHash: normalizedInputHash
         };
@@ -656,34 +453,6 @@ app.post('/api/mint/verify-and-mint', async (req, res) => {
             const tierNames = { common: 'Common', rare: 'Rare', legendary: 'Legendary' };
             const odinAllocations = { common: 40000, rare: 300000, legendary: 1000000 };
 
-            console.log('📝 Recording mints to database...');
-
-            for (const result of mintResults) {
-                try {
-                    await mintRecorder.recordMint({
-                        serialNumber: result.serialNumber,
-                        metadataTokenId: result.metadataTokenId,
-                        tokenId: process.env.TOKEN_ID,
-                        rarity: rarity,
-                        odinAllocation: odinAllocations[rarity],
-                        owner: userAccountId,
-                        userAccountId: userAccountId,
-                        transactionId: result.transactionId,
-                        paymentTransactionHash: transactionHash,
-                        paidAmount: amountSentHbar,
-                        paidCurrency: 'HBAR',
-                        hbarUsdRate: currentHbarRate,
-                        metadataUrl: result.metadataUrl,
-                        ipfsGatewayUrl: result.ipfsGatewayUrl || `https://ipfs.io/ipfs/bafybeibx4xw6e6r2x5trv4lskhtjqs2y2qfgmajbf6c3k6oohcsmv2cuwu/${result.metadataTokenId}.json`,
-                        mintedAt: new Date().toISOString(),
-                        isAirdrop: false
-                    });
-                    console.log(`   ✅ Recorded mint for Serial #${result.serialNumber}`);
-                } catch (recordError) {
-                    console.error(`   ⚠️  Failed to record mint:`, recordError.message);
-                    // Continue even if recording fails
-                }
-            }
             // Build response using mintResults array
             return res.json({
                 success: true,
@@ -699,13 +468,7 @@ app.post('/api/mint/verify-and-mint', async (req, res) => {
                     transactionId: result.transactionId
                 })),
                 transactionHash: transactionHash,
-                mintedCount: mintResults.length,
-                pricing: {
-                    paidHbar: amountSentHbar,
-                    expectedHbar: expectedPriceHbar * quantity,
-                    hbarUsdRate: currentHbarRate,
-                    usdEquivalent: expectedPriceUsd * quantity
-                }
+                mintedCount: mintResults.length
             });
 
         } catch (mintError) {
@@ -1147,23 +910,23 @@ app.get('/api/mint/pricing', async (req, res) => {
         const mintService = new MintService();
         const pricing = {
             common: {
-                price: 1,//14, // Changed from "14 HBAR" to 14
+                price: 1400,//14, // Changed from "14 HBAR" to 14
                 //tinybars: new Hbar(14).toTinybars().toString(),
-                tinybars: new Hbar(1).toTinybars().toString(),
+                tinybars: new Hbar(1400).toTinybars().toString(),
                 odinAllocation: 40000,
                 available: mintService.getAvailableByRarity('common')
             },
             rare: {
-                price: 2,//72, // Changed from "72 HBAR" to 72
+                price: 7200,//72, // Changed from "72 HBAR" to 72
                 //tinybars: new Hbar(72).toTinybars().toString(),
-                tinybars: new Hbar(2).toTinybars().toString(),
+                tinybars: new Hbar(7200).toTinybars().toString(),
                 odinAllocation: 300000,
                 available: mintService.getAvailableByRarity('rare')
             },
             legendary: {
-                price: 3,//220, // Changed from "220 HBAR" to 220
+                price: 22000,//220, // Changed from "220 HBAR" to 220
                 //tinybars: new Hbar(220).toTinybars().toString(),
-                tinybars: new Hbar(3).toTinybars().toString(),
+                tinybars: new Hbar(22000).toTinybars().toString(),
                 odinAllocation: 1000000,
                 available: mintService.getAvailableByRarity('legendary')
             }
@@ -1177,68 +940,6 @@ app.get('/api/mint/pricing', async (req, res) => {
         });
     } catch (error) {
         console.error('Pricing error:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-/**
- * Get dynamic pricing based on current HBAR/USD rate
- * GET /api/mint/dynamic-pricing
- */
-app.get('/api/mint/dynamic-pricing', async (req, res) => {
-    try {
-        const mintService = new MintService();
-        const dynamicPricing = await priceService.getDynamicPricing();
-
-        // Add availability info
-        const pricing = {
-            success: true,
-            hbarUsdPrice: dynamicPricing.hbarUsdPrice,
-            lastUpdated: dynamicPricing.lastUpdated,
-            tiers: {
-                common: {
-                    ...dynamicPricing.tiers.common,
-                    available: mintService.getAvailableByRarity('common')
-                },
-                rare: {
-                    ...dynamicPricing.tiers.rare,
-                    available: mintService.getAvailableByRarity('rare')
-                },
-                legendary: {
-                    ...dynamicPricing.tiers.legendary,
-                    available: mintService.getAvailableByRarity('legendary')
-                }
-            }
-        };
-
-        mintService.close();
-        res.json(pricing);
-
-    } catch (error) {
-        console.error('Dynamic pricing error:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-/**
- * Get current HBAR price
- * GET /api/mint/hbar-price
- */
-app.get('/api/mint/hbar-price', async (req, res) => {
-    try {
-        const hbarPrice = await priceService.getCurrentHbarPrice();
-        res.json({
-            success: true,
-            hbarUsdPrice: hbarPrice,
-            lastUpdated: new Date().toISOString()
-        });
-    } catch (error) {
         res.status(500).json({
             success: false,
             error: error.message
