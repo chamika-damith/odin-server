@@ -13,7 +13,7 @@ require("dotenv").config();
 
 class MintService {
     constructor() {
-        this.client = Client.forMainnet()
+        this.client = Client.forTestnet();
 
         // FIX: Use the OPERATOR_KEY directly
         this.privateKey = PrivateKey.fromStringECDSA(process.env.OPERATOR_KEY);
@@ -41,9 +41,9 @@ class MintService {
 
         // Pricing in HBAR
         this.pricing = {
-            common: new Hbar(1), //1400
-            rare: new Hbar(2), //7200
-            legendary: new Hbar(3) //22000
+            common: new Hbar(14),
+            rare: new Hbar(72),
+            legendary: new Hbar(220)
         };
 
         this.loadMintingHistory();

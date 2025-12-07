@@ -106,7 +106,7 @@ app.get('/api/mint/check-payment/:accountId', async (req, res) => {
         const { accountId } = req.params;
 
         // Simple check: Query Mirror Node for user's last transaction
-        const mirrorUrl = `https://testnet.mirrornode.hedera.com/api/v1/transactions?account.id=${accountId}&limit=1&order=desc`;
+        const mirrorUrl = `https://mainnet-public.mirrornode.hedera.com/api/v1/transactions?account.id=${accountId}&limit=1&order=desc`;
         const response = await fetch(mirrorUrl);
 
         if (!response.ok) {
@@ -277,7 +277,7 @@ app.post('/api/mint/verify-and-mint', async (req, res) => {
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             console.log(`   Attempt ${attempt}/${maxAttempts}...`);
 
-            const mirrorUrl = `https://testnet.mirrornode.hedera.com/api/v1/transactions?account.id=${userAccountId}&transactiontype=CRYPTOTRANSFER&limit=10&order=desc`;
+            const mirrorUrl = `https://mainnet-public.mirrornode.hedera.com/api/v1/transactions?account.id=${userAccountId}&transactiontype=CRYPTOTRANSFER&limit=10&order=desc`;
 
             try {
                 const mirrorResponse = await fetch(mirrorUrl);
@@ -392,7 +392,8 @@ app.post('/api/mint/verify-and-mint', async (req, res) => {
         const amountSentHbar = amountSentTinybars / 100000000;
         const perNFTCost = amountSentHbar / quantity;
 
-        const expectedPrices = { common: 14, rare: 72, legendary: 220 };
+        //const expectedPrices = { common: 14, rare: 72, legendary: 220 };
+        const expectedPrices = { common: 1, rare: 2, legendary: 3 };
         const expectedPrice = expectedPrices[rarity];
         const tolerance = expectedPrice * 0.01;
         const priceDifference = Math.abs(perNFTCost - expectedPrice);
@@ -501,7 +502,7 @@ app.post('/api/mint/verify-and-mint', async (req, res) => {
 app.get('/api/debug/token-info', async (req, res) => {
     try {
         const { TokenInfoQuery } = require("@hashgraph/sdk");
-        const client = Client.forTestnet();
+        const client = Client.forMainnet();
         client.setOperator(process.env.OPERATOR_ID, process.env.OPERATOR_KEY);
 
         const query = new TokenInfoQuery()
@@ -752,7 +753,7 @@ app.get('/api/simple-transactions/:accountId', async (req, res) => {
         }
 
         // Build SIMPLE URL - NO timestamp filters
-        const mirrorUrl = `https://testnet.mirrornode.hedera.com/api/v1/transactions?account.id=${accountId}&limit=${limit}&order=desc`;
+        const mirrorUrl = `https://mainnet-public.mirrornode.hedera.com/api/v1/transactions?account.id=${accountId}&limit=${limit}&order=desc`;
 
         console.log(`🔍 Calling: ${mirrorUrl}`);
 
@@ -791,7 +792,7 @@ app.get('/api/simple-transactions/:accountId', async (req, res) => {
                 counterparty: counterparty,
                 fee: (parseInt(tx.charged_tx_fee || 0) / 100000000).toFixed(4) + ' HBAR',
                 status: tx.result === 'SUCCESS' ? 'success' : 'failed',
-                hashscan: `https://hashscan.io/testnet/transaction/${tx.transaction_id}`
+                hashscan: `https://hashscan.io/mainnet/transaction/${tx.transaction_id}`
             };
         });
 
@@ -851,10 +852,10 @@ app.get('/api/mint/stats', async (req, res) => {
         const tierStats = mintService.tierService.getTierStats();
 
         // Calculate actual total minted from tier stats
-        const actualTotalMinted = tierStats.common.minted + 
-                                   tierStats.rare.minted + 
-                                   tierStats.legendary.minted + 
-                                   (tierStats.legendary_1of1?.minted || 0);
+        const actualTotalMinted = tierStats.common.minted +
+            tierStats.rare.minted +
+            tierStats.legendary.minted +
+            (tierStats.legendary_1of1?.minted || 0);
 
         const stats = {
             success: true,
@@ -909,20 +910,23 @@ app.get('/api/mint/pricing', async (req, res) => {
         const mintService = new MintService();
         const pricing = {
             common: {
-                price: 14, // Changed from "14 HBAR" to 14
-                tinybars: new Hbar(14).toTinybars().toString(),
+                price: 1,//14, // Changed from "14 HBAR" to 14
+                //tinybars: new Hbar(14).toTinybars().toString(),
+                tinybars: new Hbar(1).toTinybars().toString(),
                 odinAllocation: 40000,
                 available: mintService.getAvailableByRarity('common')
             },
             rare: {
-                price: 72, // Changed from "72 HBAR" to 72
-                tinybars: new Hbar(72).toTinybars().toString(),
+                price: 2,//72, // Changed from "72 HBAR" to 72
+                //tinybars: new Hbar(72).toTinybars().toString(),
+                tinybars: new Hbar(3).toTinybars().toString(),
                 odinAllocation: 300000,
                 available: mintService.getAvailableByRarity('rare')
             },
             legendary: {
-                price: 220, // Changed from "220 HBAR" to 220
-                tinybars: new Hbar(220).toTinybars().toString(),
+                price: 3,//220, // Changed from "220 HBAR" to 220
+                //tinybars: new Hbar(220).toTinybars().toString(),
+                tinybars: new Hbar(4).toTinybars().toString(),
                 odinAllocation: 1000000,
                 available: mintService.getAvailableByRarity('legendary')
             }
@@ -972,7 +976,7 @@ async function deployNFT() {
     console.log("📝 Account:", process.env.OPERATOR_ID);
 
     // 2. FIXED CLIENT CONFIGURATION
-    const client = Client.forTestnet();
+    const client = Client.forMainnet();
 
     try {
         // IMPROVED KEY PARSING - HANDLES HEX FORMAT
@@ -989,29 +993,21 @@ async function deployNFT() {
 
         // Method 1: Try as ECDSA (most common for EVM addresses)
         try {
-            operatorKey = PrivateKey.fromStringECDSA(keyString);
-            console.log("✅ ECDSA format successful");
+            operatorKey = PrivateKey.fromStringED25519(keyString);
+            console.log("✅ ED25519 format successful");
         } catch (e1) {
-            // Method 2: Try HEX format without 0x
+            // Method 2: Try ECDSA
             try {
-                operatorKey = PrivateKey.fromStringECDSA(cleanKey);
-                console.log("✅ HEX format (without 0x) successful");
+                operatorKey = PrivateKey.fromStringECDSA(keyString);
+                console.log("✅ ECDSA format successful");
             } catch (e2) {
-                // Method 3: Try ED25519
+                // Method 3: Try standard DER
                 try {
-                    operatorKey = PrivateKey.fromStringED25519(keyString);
-                    console.log("✅ ED25519 format successful");
+                    operatorKey = PrivateKey.fromString(keyString);
+                    console.log("✅ Standard DER format successful");
                 } catch (e3) {
-                    // Method 4: Try standard DER
-                    try {
-                        operatorKey = PrivateKey.fromString(keyString);
-                        console.log("✅ Standard DER format successful");
-                    } catch (e4) {
-                        console.log("❌ ALL KEY FORMATS FAILED");
-                        console.log("Key provided:", keyString);
-                        console.log("Clean key:", cleanKey);
-                        throw new Error("Cannot parse private key. Try a different account.");
-                    }
+                    console.log("❌ ALL KEY FORMATS FAILED");
+                    throw new Error("Cannot parse private key");
                 }
             }
         }
@@ -1199,7 +1195,7 @@ app.post('/api/deploy', async (req, res) => {
             return res.json({
                 success: true,
                 message: "Deployment submitted but receipt timed out. Check HashScan for token ID.",
-                checkUrl: "https://hashscan.io/testnet"
+                checkUrl: "https://hashscan.io/mainnet"
             });
         }
 
@@ -1311,7 +1307,7 @@ app.post('/api/upgrade/name', async (req, res) => {
             return res.status(403).json({ error: "Unauthorized" });
         }
 
-        const client = Client.forTestnet();
+        const client = Client.forMainnet();
         client.setOperator(process.env.OPERATOR_ID, process.env.OPERATOR_KEY);
         const upgradeService = new UpgradeService(client, process.env.TOKEN_ID);
 
@@ -1330,7 +1326,7 @@ app.post('/api/upgrade/royalties', async (req, res) => {
             return res.status(403).json({ error: "Unauthorized" });
         }
 
-        const client = Client.forTestnet();
+        const client = Client.forMainnet();
         client.setOperator(process.env.OPERATOR_ID, process.env.OPERATOR_KEY);
         const upgradeService = new UpgradeService(client, process.env.TOKEN_ID);
 
@@ -1349,7 +1345,7 @@ app.post('/api/upgrade/pause', async (req, res) => {
             return res.status(403).json({ error: "Unauthorized" });
         }
 
-        const client = Client.forTestnet();
+        const client = Client.forMainnet();
         client.setOperator(process.env.OPERATOR_ID, process.env.OPERATOR_KEY);
         const upgradeService = new UpgradeService(client, process.env.TOKEN_ID);
 
@@ -1368,7 +1364,7 @@ app.post('/api/upgrade/unpause', async (req, res) => {
             return res.status(403).json({ error: "Unauthorized" });
         }
 
-        const client = Client.forTestnet();
+        const client = Client.forMainnet();
         client.setOperator(process.env.OPERATOR_ID, process.env.OPERATOR_KEY);
         const upgradeService = new UpgradeService(client, process.env.TOKEN_ID);
 
