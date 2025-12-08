@@ -63,9 +63,9 @@ class MintService {
         };*/
 
         this.pricing = {
-            common: new Hbar(1),  // Fallback values
-            rare: new Hbar(2),
-            legendary: new Hbar(3)
+            common: new Hbar(1400),  // Fallback values
+            rare: new Hbar(7200),
+            legendary: new Hbar(22000)
         };
 
 
