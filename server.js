@@ -52,6 +52,144 @@ app.get('/api/mint/records', async (req, res) => {
 });
 
 /**
+ * Debug: Check if metadata IDs are being assigned correctly
+ * GET /api/debug/next-tokens/:rarity
+ */
+app.get('/api/debug/next-tokens/:rarity', async (req, res) => {
+    try {
+        const { rarity } = req.params;
+        const { adminPassword } = req.query;
+
+        if (adminPassword !== process.env.ADMIN_PASSWORD) {
+            return res.status(403).json({ error: "Unauthorized" });
+        }
+
+        const mintService = new MintService();
+        const tierService = mintService.tierService;
+
+        // Get current state
+        const stats = tierService.getTierStats();
+        const nextIndex = tierService.mintedTracker.nextIndex[rarity] || 0;
+        const allTokens = tierService.rarityMapping[rarity] || [];
+
+        // Preview next 5 tokens
+        const next5 = allTokens.slice(nextIndex, nextIndex + 5);
+
+        mintService.close();
+
+        res.json({
+            success: true,
+            rarity: rarity,
+            nextIndex: nextIndex,
+            totalAvailable: stats[rarity].available,
+            totalMinted: stats[rarity].minted,
+            next5Tokens: next5,
+            allTokensCount: allTokens.length
+        });
+
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * Verify mint tracking consistency
+ * GET /api/debug/verify-tracking
+ */
+app.get('/api/debug/verify-tracking', async (req, res) => {
+    try {
+        const { adminPassword } = req.query;
+
+        if (adminPassword !== process.env.ADMIN_PASSWORD) {
+            return res.status(403).json({ error: "Unauthorized" });
+        }
+
+        const mintService = new MintService();
+        const tierService = mintService.tierService;
+
+        // Get tracking data
+        const mintedTracker = tierService.mintedTracker;
+        const stats = tierService.getTierStats();
+
+        // Get mint records
+        const allRecords = mintRecorder.getAllRecords();
+        const recordsByRarity = {
+            common: allRecords.filter(r => r.rarity === 'common'),
+            rare: allRecords.filter(r => r.rarity === 'rare'),
+            legendary: allRecords.filter(r => r.rarity === 'legendary')
+        };
+
+        // Compare
+        const comparison = {
+            common: {
+                trackerSays: stats.common.minted,
+                recordsSay: recordsByRarity.common.length,
+                match: stats.common.minted === recordsByRarity.common.length
+            },
+            rare: {
+                trackerSays: stats.rare.minted,
+                recordsSay: recordsByRarity.rare.length,
+                match: stats.rare.minted === recordsByRarity.rare.length
+            },
+            legendary: {
+                trackerSays: stats.legendary.minted,
+                recordsSay: recordsByRarity.legendary.length,
+                match: stats.legendary.minted === recordsByRarity.legendary.length
+            }
+        };
+
+        mintService.close();
+
+        res.json({
+            success: true,
+            allMatch: comparison.common.match && comparison.rare.match && comparison.legendary.match,
+            comparison: comparison,
+            nextIndexes: mintedTracker.nextIndex
+        });
+
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * Check mint lock status
+ * GET /api/debug/mint-lock-status
+ */
+app.get('/api/debug/mint-lock-status', async (req, res) => {
+    try {
+        const { adminPassword } = req.query;
+
+        if (adminPassword !== process.env.ADMIN_PASSWORD) {
+            return res.status(403).json({ error: "Unauthorized" });
+        }
+
+        const mintService = new MintService();
+        const tierService = mintService.tierService;
+        
+        const lockDuration = tierService.lockAcquiredAt 
+            ? Date.now() - new Date(tierService.lockAcquiredAt).getTime()
+            : 0;
+        
+        res.json({
+            success: true,
+            isLocked: tierService.mintLock,
+            lockedSince: tierService.lockAcquiredAt,
+            lockDurationMs: lockDuration,
+            lockDurationSeconds: Math.floor(lockDuration / 1000),
+            status: tierService.mintLock 
+                ? `🔒 Locked for ${Math.floor(lockDuration / 1000)}s` 
+                : '🔓 Available'
+        });
+
+        mintService.close();
+
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
  * Get mint records by rarity
  * GET /api/mint/records/rarity/:rarity
  */
@@ -1272,7 +1410,7 @@ app.get('/api/mint/test', (req, res) => {
 
 // ==================== DEPLOYMENT ROUTES ====================
 
-async function deployNFT() {
+/*async function deployNFT() {
     console.log("🔫 BULLETPROOF NFT DEPLOYMENT");
     console.log("========================================\n");
 
@@ -1419,7 +1557,159 @@ ADMIN_PASSWORD=${process.env.ADMIN_PASSWORD || 'admin123'}`;
         console.log("\n❌ DEPLOYMENT FAILED:", error.message);
         throw error;
     }
+}*/
+
+
+async function deployNFT() {
+    console.log("🔫 BULLETPROOF NFT DEPLOYMENT");
+    console.log("========================================\n");
+
+    // 1. VALIDATE ENVIRONMENT
+    if (!process.env.OPERATOR_ID || !process.env.OPERATOR_KEY) {
+        console.log("❌ MISSING: OPERATOR_ID or OPERATOR_KEY in .env");
+        process.exit(1);
+    }
+
+    console.log("✅ Environment check passed");
+    console.log("📝 Account:", process.env.OPERATOR_ID);
+
+    // 2. CLIENT CONFIGURATION
+    const client = Client.forMainnet();
+
+    try {
+        // Parse operator key (handle 0x prefix for raw hex)
+        let operatorKey;
+        const keyString = process.env.OPERATOR_KEY.trim().replace(/^0x/, '');
+
+        console.log("🔑 Parsing private key...");
+        console.log("Key format:", keyString.length === 64 ? "Raw ECDSA" : "DER-encoded");
+
+        try {
+            operatorKey = PrivateKey.fromStringECDSA(keyString);
+            console.log("✅ ECDSA key parsed");
+        } catch (e1) {
+            try {
+                operatorKey = PrivateKey.fromStringED25519(keyString);
+                console.log("✅ ED25519 key parsed");
+            } catch (e2) {
+                operatorKey = PrivateKey.fromString(keyString);
+                console.log("✅ Key parsed (auto-detect)");
+            }
+        }
+
+        client.setOperator(process.env.OPERATOR_ID, operatorKey);
+        console.log("✅ Client configured");
+        console.log("📝 Public key:", operatorKey.publicKey.toString().substring(0, 30) + "...\n");
+
+        // 3. GENERATE SUPPLY KEY (use same algorithm as operator key)
+        console.log("🔑 Generating supply key...");
+        const supplyKey = PrivateKey.generateECDSA(); // Match ECDSA format
+        console.log("✅ Supply key generated (ECDSA)\n");
+
+        // 4. CREATE TOKEN - ULTRA SIMPLE VERSION
+        console.log("📦 Creating NFT token...");
+        console.log("⚙️  Configuration:");
+        console.log("   Name: Odin");
+        console.log("   Symbol: ODIN");
+        console.log("   Type: Non-Fungible Unique");
+        console.log("   Treasury:", process.env.OPERATOR_ID);
+        console.log("   Supply Key: Generated");
+        console.log("");
+
+        const transaction = new TokenCreateTransaction()
+            .setTokenName("Odin")
+            .setTokenSymbol("ODIN")
+            .setTokenType(TokenType.NonFungibleUnique)
+            .setDecimals(0)
+            .setInitialSupply(0)
+            .setTreasuryAccountId(process.env.OPERATOR_ID)
+            .setSupplyKey(supplyKey.publicKey)
+            .setMaxTransactionFee(new Hbar(30));
+
+        console.log("💰 Max transaction fee: 30 HBAR");
+        console.log("⚡ Submitting to network...\n");
+
+        // Execute - operator signature is automatic via client
+        const txResponse = await transaction.execute(client);
+
+        console.log("✅ Transaction submitted!");
+        console.log("📋 Transaction ID:", txResponse.transactionId.toString());
+        console.log("");
+
+        // 5. WAIT FOR RECEIPT
+        console.log("⏳ Waiting for network consensus...");
+
+        const receipt = await txResponse.getReceipt(client);
+
+        console.log("✅ Transaction confirmed!");
+        console.log("📦 Receipt status:", receipt.status.toString());
+        console.log("");
+
+        if (!receipt.tokenId) {
+            throw new Error("No token ID in receipt");
+        }
+
+        const tokenId = receipt.tokenId;
+
+        // 6. SUCCESS OUTPUT
+        console.log("🎉 🎉 🎉 NFT DEPLOYED SUCCESSFULLY! 🎉 🎉 🎉");
+        console.log("========================================");
+        console.log("📝 TOKEN ID:", tokenId.toString());
+        console.log("🔍 HashScan:", `https://hashscan.io/testnet/token/${tokenId.toString()}`);
+        console.log("👤 Treasury:", process.env.OPERATOR_ID);
+        console.log("🔑 Supply Key:", supplyKey.toString().substring(0, 40) + "...");
+        console.log("========================================\n");
+
+        // 7. UPDATE ENVIRONMENT FILE
+        console.log("💾 Updating .env file...");
+
+        const fs = require('fs');
+        const envContent = `OPERATOR_ID=${process.env.OPERATOR_ID}
+OPERATOR_KEY=${process.env.OPERATOR_KEY}
+NETWORK=testnet
+TOKEN_ID=${tokenId.toString()}
+SUPPLY_KEY=${supplyKey.toString()}
+TREASURY_ACCOUNT_ID=${process.env.OPERATOR_ID}
+PORT=3000
+ADMIN_PASSWORD=${process.env.ADMIN_PASSWORD || 'admin123'}
+GITHUB_TOKEN=${process.env.GITHUB_TOKEN || ''}
+GITHUB_REPO_OWNER=${process.env.GITHUB_REPO_OWNER || ''}
+GITHUB_REPO_NAME=${process.env.GITHUB_REPO_NAME || ''}
+GITHUB_BRANCH=${process.env.GITHUB_BRANCH || 'main'}`;
+
+        fs.writeFileSync('.env', envContent);
+        console.log("✅ Environment variables saved\n");
+
+        return tokenId.toString();
+
+    } catch (error) {
+        console.log("\n❌ ❌ ❌ DEPLOYMENT FAILED ❌ ❌ ❌");
+        console.log("========================================");
+        console.log("Error:", error.message);
+
+        if (error.status) {
+            console.log("Status:", error.status.toString());
+        }
+
+        if (error.message.includes("INVALID_SIGNATURE")) {
+            console.log("\n🔍 Debug Info:");
+            console.log("This shouldn't happen since diagnostic passed!");
+            console.log("The issue might be in transaction construction.");
+        }
+
+        console.log("\nFull error:");
+        console.log(error);
+        console.log("========================================\n");
+
+        throw error;
+    } finally {
+        client.close();
+    }
 }
+
+
+//module.exports = { deployNFT };
+
 
 /**
  * Debug endpoint to see what's happening during initialization
@@ -1592,18 +1882,323 @@ app.post('/api/deploy/auto', async (req, res) => {
     }
 });
 
-// ==================== AIRDROP ENDPOINTS ====================
 
-app.post('/api/airdrop', async (req, res) => {
+// ==================== AIRDROP BATCH ENDPOINT ====================
+
+/**
+ * Batch Airdrop NFTs to multiple wallets
+ * POST /api/airdrop/batch
+ * 
+ * Body: {
+ *   adminPassword: "your_admin_password",
+ *   rarity: "common" | "rare" | "legendary",
+ *   walletAddresses: ["0.0.12345", "0.0.67890", ...]
+ * }
+ * 
+ * Only accessible by OPERATOR_ID (admin)
+ */
+app.post('/api/airdrop/batch', async (req, res) => {
+    console.log('\n🎁 BATCH AIRDROP ENDPOINT CALLED');
+    console.log('================================================');
+
     try {
-        const { snapshotData } = req.body;
+        const { adminPassword, rarity, walletAddresses } = req.body;
 
-        const airdropService = new AirdropService();
-        const results = await airdropService.distributeAirdrop(snapshotData);
+        // Step 1: Validate admin password
+        if (adminPassword !== process.env.ADMIN_PASSWORD) {
+            console.log('❌ Unauthorized access attempt');
+            return res.status(403).json({
+                success: false,
+                error: 'Unauthorized. Invalid admin password.'
+            });
+        }
 
-        res.json({ success: true, ...results });
+        console.log('✅ Admin authentication successful');
+
+        // Step 2: Validate required parameters
+        if (!rarity || !walletAddresses) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required parameters: rarity and walletAddresses are required'
+            });
+        }
+
+        // Step 3: Validate rarity
+        if (!['common', 'rare', 'legendary'].includes(rarity)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid rarity. Must be: common, rare, or legendary'
+            });
+        }
+
+        // Step 4: Validate wallet addresses array
+        if (!Array.isArray(walletAddresses) || walletAddresses.length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'walletAddresses must be a non-empty array'
+            });
+        }
+
+        // Validate each wallet address format
+        const invalidAddresses = walletAddresses.filter(addr => !addr.match(/^\d+\.\d+\.\d+$/));
+        if (invalidAddresses.length > 0) {
+            return res.status(400).json({
+                success: false,
+                error: `Invalid wallet address format: ${invalidAddresses.join(', ')}. Use format: 0.0.XXXXX`
+            });
+        }
+
+        console.log('📋 Airdrop Request:');
+        console.log(`   Rarity: ${rarity}`);
+        console.log(`   Recipients: ${walletAddresses.length}`);
+        console.log(`   Addresses: ${walletAddresses.slice(0, 5).join(', ')}${walletAddresses.length > 5 ? '...' : ''}`);
+        console.log('================================================\n');
+
+        // Step 5: Check availability
+        const mintService = new MintService();
+        const tierStats = mintService.tierService.getTierStats();
+        const available = tierStats[rarity]?.available || 0;
+
+        if (available < walletAddresses.length) {
+            mintService.close();
+            return res.status(400).json({
+                success: false,
+                error: `Not enough ${rarity} NFTs available. Requested: ${walletAddresses.length}, Available: ${available}`
+            });
+        }
+
+        console.log(`✅ Availability check passed: ${available} ${rarity} NFTs available`);
+
+        // Step 6: Process airdrops
+        const results = [];
+        const errors = [];
+        const tierNames = { common: 'Common', rare: 'Rare', legendary: 'Legendary' };
+        const odinAllocations = { common: 40000, rare: 300000, legendary: 1000000 };
+
+        for (let i = 0; i < walletAddresses.length; i++) {
+            const walletAddress = walletAddresses[i];
+            console.log(`\n[${i + 1}/${walletAddresses.length}] 🎨 Minting ${rarity} NFT to ${walletAddress}...`);
+
+            try {
+                // Mint the NFT using mintByRarity (same as regular minting)
+                const mintResult = await mintService.mintByRarity(walletAddress, rarity);
+
+                console.log(`   ✅ Minted - Serial: #${mintResult.serialNumber}, Metadata ID: ${mintResult.metadataTokenId}`);
+
+                // Record to mint-recorder (same as regular minting endpoint)
+                try {
+                    await mintRecorder.recordMint({
+                        serialNumber: mintResult.serialNumber,
+                        metadataTokenId: mintResult.metadataTokenId,
+                        tokenId: process.env.TOKEN_ID,
+                        rarity: rarity,
+                        odinAllocation: odinAllocations[rarity],
+                        owner: walletAddress,
+                        userAccountId: walletAddress,
+                        transactionId: mintResult.transactionId,
+                        paymentTransactionHash: null, // No payment for airdrops
+                        paidAmount: 0,
+                        paidCurrency: 'AIRDROP',
+                        hbarUsdRate: 0,
+                        metadataUrl: mintResult.metadataUrl,
+                        metadataGatewayUrl: mintResult.metadataUrl || `https://min.theninerealms.world/metadata/${mintResult.metadataTokenId}.json`,
+                        mintedAt: new Date().toISOString(),
+                        isAirdrop: true
+                    });
+                    console.log(`   📝 Recorded mint for Serial #${mintResult.serialNumber}`);
+                } catch (recordError) {
+                    console.error(`   ⚠️ Failed to record mint:`, recordError.message);
+                    // Continue even if recording fails
+                }
+
+                results.push({
+                    walletAddress: walletAddress,
+                    success: true,
+                    serialNumber: mintResult.serialNumber,
+                    metadataTokenId: mintResult.metadataTokenId,
+                    tokenId: process.env.TOKEN_ID,
+                    rarity: rarity,
+                    tierName: tierNames[rarity],
+                    odinAllocation: odinAllocations[rarity],
+                    transactionId: mintResult.transactionId,
+                    metadataUrl: mintResult.metadataUrl
+                });
+
+            } catch (mintError) {
+                console.error(`   ❌ Failed to mint for ${walletAddress}:`, mintError.message);
+                errors.push({
+                    walletAddress: walletAddress,
+                    success: false,
+                    error: mintError.message
+                });
+            }
+
+            // Small delay between mints to avoid rate limiting
+            if (i < walletAddresses.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+        }
+
+        mintService.close();
+
+        // Step 7: Generate summary
+        const summary = {
+            totalRequested: walletAddresses.length,
+            successful: results.length,
+            failed: errors.length,
+            rarity: rarity,
+            tierName: tierNames[rarity],
+            odinPerNFT: odinAllocations[rarity],
+            totalOdinDistributed: results.length * odinAllocations[rarity]
+        };
+
+        console.log('\n================================================');
+        console.log('🎉 BATCH AIRDROP COMPLETE!');
+        console.log('================================================');
+        console.log(`   Total Requested: ${summary.totalRequested}`);
+        console.log(`   Successful: ${summary.successful}`);
+        console.log(`   Failed: ${summary.failed}`);
+        console.log(`   Rarity: ${summary.tierName}`);
+        console.log(`   Total ODIN Distributed: ${summary.totalOdinDistributed.toLocaleString()}`);
+        console.log('================================================\n');
+
+        return res.json({
+            success: true,
+            message: `Batch airdrop completed. ${summary.successful}/${summary.totalRequested} NFTs minted successfully.`,
+            summary: summary,
+            results: results,
+            errors: errors.length > 0 ? errors : undefined
+        });
+
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('❌ BATCH AIRDROP ERROR:', error.message);
+        return res.status(500).json({
+            success: false,
+            error: 'Internal server error',
+            details: error.message
+        });
+    }
+});
+
+/**
+ * Preview Airdrop (Dry Run)
+ * POST /api/airdrop/preview
+ * 
+ * Returns what would be minted without actually minting
+ */
+app.post('/api/airdrop/preview', async (req, res) => {
+    try {
+        const { adminPassword, rarity, walletAddresses } = req.body;
+
+        // Validate admin password
+        if (adminPassword !== process.env.ADMIN_PASSWORD) {
+            return res.status(403).json({
+                success: false,
+                error: 'Unauthorized. Invalid admin password.'
+            });
+        }
+
+        // Validate parameters
+        if (!rarity || !walletAddresses) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required parameters: rarity and walletAddresses'
+            });
+        }
+
+        if (!['common', 'rare', 'legendary'].includes(rarity)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid rarity. Must be: common, rare, or legendary'
+            });
+        }
+
+        if (!Array.isArray(walletAddresses) || walletAddresses.length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'walletAddresses must be a non-empty array'
+            });
+        }
+
+        // Check availability
+        const mintService = new MintService();
+        const tierStats = mintService.tierService.getTierStats();
+        const available = tierStats[rarity]?.available || 0;
+        mintService.close();
+
+        const odinAllocations = { common: 40000, rare: 300000, legendary: 1000000 };
+        const tierNames = { common: 'Common', rare: 'Rare', legendary: 'Legendary' };
+
+        const canComplete = available >= walletAddresses.length;
+
+        res.json({
+            success: true,
+            preview: {
+                rarity: rarity,
+                tierName: tierNames[rarity],
+                requestedCount: walletAddresses.length,
+                availableCount: available,
+                canComplete: canComplete,
+                odinPerNFT: odinAllocations[rarity],
+                totalOdinToDistribute: walletAddresses.length * odinAllocations[rarity],
+                walletAddresses: walletAddresses,
+                warning: !canComplete ? `Not enough NFTs available. Need ${walletAddresses.length}, have ${available}` : null
+            }
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Get Airdrop History
+ * GET /api/airdrop/history
+ * 
+ * Returns all airdropped NFTs from mint records
+ */
+app.get('/api/airdrop/history', async (req, res) => {
+    try {
+        const { adminPassword } = req.query;
+
+        // Validate admin password
+        if (adminPassword !== process.env.ADMIN_PASSWORD) {
+            return res.status(403).json({
+                success: false,
+                error: 'Unauthorized. Invalid admin password.'
+            });
+        }
+
+        const allRecords = mintRecorder.getAllRecords();
+        const airdropRecords = allRecords.filter(r => r.isAirdrop === true);
+
+        // Group by rarity
+        const byRarity = {
+            common: airdropRecords.filter(r => r.rarity === 'common'),
+            rare: airdropRecords.filter(r => r.rarity === 'rare'),
+            legendary: airdropRecords.filter(r => r.rarity === 'legendary')
+        };
+
+        res.json({
+            success: true,
+            totalAirdrops: airdropRecords.length,
+            byRarity: {
+                common: byRarity.common.length,
+                rare: byRarity.rare.length,
+                legendary: byRarity.legendary.length
+            },
+            totalOdinDistributed: airdropRecords.reduce((sum, r) => sum + (r.odinAllocation || 0), 0),
+            records: airdropRecords
+        });
+
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
     }
 });
 

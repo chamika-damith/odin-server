@@ -216,15 +216,14 @@ class MintService {
         console.log(`\n🎨 MINTING ${rarity} NFT FOR ${userAccountId}`);
 
         try {
-            // 🔒 USE SAFE VERSION WITH MUTEX
-            const tokenData = await this.tierService.getNextTokenIdSafe(rarity, quantity);
-
+            // Get metadata token IDs
+            const tokenData = await this.tierService.getNextTokenId(rarity, quantity);
             if (!tokenData.metadataTokenIds) {
                 throw new Error('Tier service did not return metadataTokenIds');
             }
 
             const metadataTokenIds = tokenData.metadataTokenIds;
-            console.log(`✅ Metadata token IDs:`, metadataTokenIds)
+            console.log(`✅ Metadata token IDs:`, metadataTokenIds);
 
             // Use SUPPLY_KEY for minting
             const supplyKey = PrivateKey.fromStringDer(process.env.SUPPLY_KEY);

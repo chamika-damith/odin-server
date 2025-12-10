@@ -15,26 +15,19 @@ const mintRecorder = require('./mint-recorder');
 
 class MintService {
     constructor() {
-        this.client = Client.forMainnet();
+        this.client = Client.forMainnet()
 
-        // Parse OPERATOR_KEY based on format
-        const opKey = process.env.OPERATOR_KEY.trim();
-        if (opKey.startsWith("0x") || (opKey.length === 64 && !opKey.startsWith("302"))) {
-            this.privateKey = PrivateKey.fromStringECDSA(opKey.replace("0x", ""));
-        } else if (opKey.startsWith("302")) {
-            this.privateKey = PrivateKey.fromStringDer(opKey);
-        } else {
-            this.privateKey = PrivateKey.fromStringED25519(opKey);
-        }
-
+        // FIX: Use the OPERATOR_KEY directly
+        this.privateKey = PrivateKey.fromStringDer(process.env.OPERATOR_KEY);
         this.client.setOperator(process.env.OPERATOR_ID, this.privateKey);
 
         this.tokenId = process.env.TOKEN_ID;
         this.treasuryId = process.env.OPERATOR_ID;
+        //this.metadataDir = path.join(__dirname, '..', 'metadata');
 
         // Services
         this.tierService = new TierServiceCategorized();
-        //this.paymentService = new PaymentService();
+        this.paymentService = new PaymentService();
 
         // Tracking
         this.mintedTokens = new Set();
@@ -57,9 +50,9 @@ class MintService {
         */
         // Pricing in HBAR
         this.usdPricing = {
-            common: 0.1,    // $100
-            rare: 0.2,      // $500
-            legendary: 0.3 // $1500
+            common: 100,    // $100
+            rare: 500,      // $500
+            legendary: 1500 // $1500
         };
 
         // Keep for backward compatibility - will be updated dynamically
@@ -70,9 +63,9 @@ class MintService {
         };*/
 
         this.pricing = {
-            common: new Hbar(1),  // Fallback values
-            rare: new Hbar(2),
-            legendary: new Hbar(3)
+            common: new Hbar(1400),  // Fallback values
+            rare: new Hbar(7200),
+            legendary: new Hbar(22000)
         };
 
 
@@ -216,35 +209,34 @@ class MintService {
         console.log(`\n🎨 MINTING ${rarity} NFT FOR ${userAccountId}`);
 
         try {
-            // 🔒 USE SAFE VERSION WITH MUTEX
-            const tokenData = await this.tierService.getNextTokenIdSafe(rarity, quantity);
-
+            // Get metadata token IDs
+            const tokenData = await this.tierService.getNextTokenId(rarity, quantity);
             if (!tokenData.metadataTokenIds) {
                 throw new Error('Tier service did not return metadataTokenIds');
             }
 
             const metadataTokenIds = tokenData.metadataTokenIds;
-            console.log(`✅ Metadata token IDs:`, metadataTokenIds)
+            console.log(`✅ Metadata token IDs:`, metadataTokenIds);
 
             // Use SUPPLY_KEY for minting
             const supplyKey = PrivateKey.fromStringDer(process.env.SUPPLY_KEY);
 
-            // Prepare metadata bytes - STORE SERVER URL
+            // Prepare metadata bytes - STORE IPFS URL, not just token ID
             const allMetadataBytes = [];
-            const METADATA_BASE_URL = "https://min.theninerealms.world/metadata";
-            let metadataUrl = '';
+
+            let ipfsUrl = '';
 
             for (let i = 0; i < metadataTokenIds.length; i++) {
                 const tokenId = metadataTokenIds[i];
 
-                // Create the server metadata URL
-                metadataUrl = `${METADATA_BASE_URL}/${tokenId}.json`;
+                // Create the metadata URL
+                ipfsUrl = `https://min.theninerealms.world/metadata/${tokenId}.json`;
 
                 // Convert to bytes (UTF-8 encoded string)
-                const bytes = Uint8Array.from(Buffer.from(metadataUrl, 'utf8'));
+                const bytes = Uint8Array.from(Buffer.from(ipfsUrl, 'utf8'));
                 allMetadataBytes.push(bytes);
 
-                console.log(`📄 Metadata for token #${tokenId}: ${metadataUrl}`);
+                console.log(`📄 Metadata for token #${tokenId}: ${ipfsUrl}`);
             }
 
             // Mint with supply key
@@ -279,15 +271,7 @@ class MintService {
                 .addNftTransfer(this.tokenId, serialNumber, this.treasuryId, userAccountId)
                 .freezeWith(this.client);
 
-            const opKey = process.env.OPERATOR_KEY.trim();
-            let operatorKey;
-            if (opKey.startsWith("0x") || (opKey.length === 64 && !opKey.startsWith("302"))) {
-                operatorKey = PrivateKey.fromStringECDSA(opKey.replace("0x", ""));
-            } else if (opKey.startsWith("302")) {
-                operatorKey = PrivateKey.fromStringDer(opKey);
-            } else {
-                operatorKey = PrivateKey.fromStringED25519(opKey);
-            }
+            const operatorKey = PrivateKey.fromStringDer(process.env.OPERATOR_KEY);
             const signedTransferTx = await transferTx.sign(operatorKey);
             const transferResponse = await signedTransferTx.execute(this.client);
             const transferReceipt = await transferResponse.getReceipt(this.client);
@@ -303,7 +287,9 @@ class MintService {
             // Mark as minted
             await this.tierService.markAsMinted(rarity, metadataTokenIds);
 
-            // Return result WITH SERVER METADATA URL
+            // ============================================
+
+            // Return result WITH IPFS URL
             const result = {
                 success: true,
                 tokenId: this.tokenId.toString(),
@@ -312,10 +298,11 @@ class MintService {
                 rarity: rarity,
                 odinAllocation: this.odinAllocation[rarity],
                 transactionId: txResponse.transactionId.toString(),
-                metadataUrl: metadataUrl
+                metadataUrl: ipfsUrl,
+                ipfsGatewayUrl: `https://min.theninerealms.world/metadata/${metadataTokenIds[0]}.json`
             };
 
-            console.log(`✅ MINTED: Metadata URL: ${metadataUrl}`);
+            console.log(`✅ MINTED: Metadata URL: ${ipfsUrl}`);
             return result;
 
         } catch (error) {
@@ -324,7 +311,6 @@ class MintService {
             throw new Error(`Minting failed: ${error.message}`);
         }
     }
-
 
     /**
      * Load minting history from file
@@ -381,16 +367,22 @@ class MintService {
         throw new Error('All tokens have been minted');
     }
 
+    /**
+     * Load metadata for a specific token ID
+     */
     async loadMetadata(tokenId) {
         try {
-            const METADATA_BASE_URL = "https://min.theninerealms.world/metadata";
-            const metadataUrl = `${METADATA_BASE_URL}/${tokenId}.json`;
+            // Since metadata is on IPFS, we can either:
+            // 1. Fetch from IPFS (recommended for production)
+            // 2. Load from local files (for testing)
 
-            console.log(`📄 Fetching metadata from server: ${metadataUrl}`);
+            const metadataUrl = `https://min.theninerealms.world/metadata/${tokenId}.json`;
+
+            console.log(`📄 Fetching metadata from IPFS: ${metadataUrl}`);
 
             const response = await fetch(metadataUrl);
             if (!response.ok) {
-                throw new Error(`Failed to fetch metadata: ${response.status}`);
+                throw new Error(`Failed to fetch metadata from IPFS: ${response.status}`);
             }
 
             const metadata = await response.json();
@@ -398,6 +390,7 @@ class MintService {
 
         } catch (error) {
             console.error(`Failed to load metadata for token ${tokenId}:`, error.message);
+
         }
     }
 
@@ -528,7 +521,6 @@ class MintService {
      */
 
     async mintNFT(userAccountId, options = {}) {
-        let tokenId;
         try {
             console.log(`🎯 Starting NFT mint for ${userAccountId}`);
             console.log(`📦 Options:`, options);
@@ -539,31 +531,44 @@ class MintService {
             }
 
             // Determine which token to mint
+            let tokenId;
             let tier;
 
             if (options.tokenId) {
+                // Specific token requested
                 tokenId = options.tokenId;
+
+                // Check if already minted
                 if (this.mintedTokens.has(tokenId)) {
                     throw new Error(`Token ${tokenId} has already been minted`);
                 }
+
+                // Get tier for this specific token
                 tier = await this.tierService.getTierForToken(tokenId);
                 console.log(`🔍 Specific token #${tokenId} requested, tier: ${tier}`);
+
             } else {
+                // Get tier from options or default to common
                 tier = options.rarity || 'common';
+
+                // Reserve next available token for this tier
                 console.log(`🔍 Reserving next ${tier} token...`);
                 const tokenIds = await this.tierService.reserveTokens(tier, 1);
                 tokenId = tokenIds[0];
                 console.log(`✅ Reserved ${tier} token #${tokenId}`);
             }
 
-            // Load metadata
+            // Load metadata from IPFS
             console.log(`📄 Fetching metadata for token #${tokenId}...`);
             let originalMetadata;
             let metadataUri;
 
             if (options.metadataUri) {
+                // Use provided metadata URI
                 metadataUri = options.metadataUri;
                 console.log(`📄 Using provided metadata URI: ${metadataUri}`);
+
+                // Try to fetch metadata to validate
                 try {
                     const response = await fetch(metadataUri.replace('ipfs://', 'https://ipfs.io/ipfs/'));
                     originalMetadata = await response.json();
@@ -576,27 +581,29 @@ class MintService {
                     };
                 }
             } else {
-                const METADATA_BASE_URL = "https://min.theninerealms.world/metadata";
-                metadataUri = `${METADATA_BASE_URL}/${tokenId}.json`;
-                console.log(`📄 Fetching from server: ${metadataUri}`);
+                // Default IPFS metadata
+
+
+                console.log(`📄 Fetching from IPFS: ${metadataUri}`);
                 try {
-                    const response = await fetch(metadataUri);
+                    const metadataUrl = `https://min.theninerealms.world/metadata/${tokenId}.json`;
+                    metadataUri = `https://min.theninerealms.world/metadata/${tokenId}.json`;
+                    const response = await fetch(metadataUrl);
+
                     if (!response.ok) {
-                        throw new Error(`Metadata fetch failed: ${response.status}`);
+                        throw new Error(`IPFS fetch failed: ${response.status}`);
                     }
+
                     originalMetadata = await response.json();
-                    console.log(`✅ Metadata loaded from server`);
-                } catch (fetchError) {
-                    console.error(`❌ Metadata fetch failed:`, fetchError.message);
-                    originalMetadata = {
-                        name: `Odin #${tokenId}`,
-                        description: `Odin #${tokenId}`,
-                        image: ``
-                    };
+                    console.log(`✅ Metadata loaded from IPFS`);
+                } catch (ipfsError) {
+                    console.error(`❌ IPFS fetch failed:`, ipfsError.message);
+
+
                 }
             }
 
-            // Enhance metadata
+            // Enhance metadata with tier info
             console.log(`✨ Enhancing metadata for ${tier} tier...`);
             const enhancedMetadata = this.enhanceMetadata(
                 originalMetadata,
@@ -605,6 +612,7 @@ class MintService {
                 options.isAirdrop || false
             );
 
+            // Create metadata buffer (store URI, not full metadata)
             const metadataBuffer = Buffer.from(metadataUri);
             console.log(`📄 Storing metadata URI (${metadataBuffer.length} bytes): ${metadataUri}`);
 
@@ -618,29 +626,32 @@ class MintService {
 
             console.log('🔑 Signing mint transaction...');
 
-            // Parse keys
-            const supplyKey = PrivateKey.fromStringDer(process.env.SUPPLY_KEY);
-            console.log('   ✅ SUPPLY_KEY parsed');
+            let signedTx;
 
-            const opKey = process.env.OPERATOR_KEY.trim();
-            let operatorKey;
-            if (opKey.startsWith("0x") || (opKey.length === 64 && !opKey.startsWith("302"))) {
-                operatorKey = PrivateKey.fromStringECDSA(opKey.replace("0x", ""));
-            } else if (opKey.startsWith("302")) {
-                operatorKey = PrivateKey.fromStringDer(opKey);
-            } else {
-                operatorKey = PrivateKey.fromStringED25519(opKey);
+            try {
+                // SUPPLY_KEY is DER format (302e...)
+                const supplyKey = PrivateKey.fromStringDer(process.env.SUPPLY_KEY);
+                console.log('   ✅ SUPPLY_KEY parsed (DER format)');
+
+                // OPERATOR_KEY is ECDSA format (0x...)
+                const operatorKey = PrivateKey.fromStringDer(process.env.OPERATOR_KEY);
+                console.log('   ✅ OPERATOR_KEY parsed (ECDSA format)');
+
+                // Sign with both keys
+                console.log('   Signing with SUPPLY_KEY...');
+                signedTx = await mintTx.sign(supplyKey);
+
+                console.log('   Also signing with OPERATOR_KEY...');
+                signedTx = await signedTx.sign(operatorKey);
+
+                console.log('   ✅ Double-signed');
+
+            } catch (signError) {
+                console.error('❌ Signing failed:', signError.message);
+                throw new Error(`Failed to sign: ${signError.message}`);
             }
-            console.log('   ✅ OPERATOR_KEY parsed');
 
-            // Sign mint transaction
-            console.log('   Signing with SUPPLY_KEY...');
-            let signedTx = await mintTx.sign(supplyKey);
-            console.log('   Also signing with OPERATOR_KEY...');
-            signedTx = await signedTx.sign(operatorKey);
-            console.log('   ✅ Double-signed');
-
-            // Execute mint
+            // Execute mint transaction
             console.log('⚡ Executing mint transaction...');
             const mintTxSubmit = await signedTx.execute(this.client);
             const mintReceipt = await mintTxSubmit.getReceipt(this.client);
@@ -655,6 +666,8 @@ class MintService {
                 .addNftTransfer(this.tokenId, serialNumber, this.treasuryId, userAccountId)
                 .freezeWith(this.client);
 
+            // Sign transfer with OPERATOR_KEY
+            const operatorKey = PrivateKey.fromStringDer(process.env.OPERATOR_KEY);
             const transferTxSign = await transferTx.sign(operatorKey);
 
             console.log('⚡ Executing transfer transaction...');
@@ -667,10 +680,13 @@ class MintService {
             this.mintedTokens.add(tokenId);
             this.totalMinted++;
 
+            // Mark token as successfully minted in tier service
             if (!options.tokenId) {
+                // Only mark if we reserved this token (not a specific pre-chosen one)
                 await this.tierService.markAsMinted(tier, tokenId);
             }
 
+            // Save minting history
             await this.saveMintingHistory();
 
             console.log(`🎉 Mint completed successfully!`);
@@ -707,8 +723,12 @@ class MintService {
         } catch (error) {
             console.error("❌ NFT minting error:", error);
 
+            // IMPORTANT: If minting failed, we need to handle the reserved token
             if (!options.tokenId && tokenId) {
-                console.warn(`⚠️ Token #${tokenId} was reserved but minting failed.`);
+                // For reserved tokens (not specific ones), we should ideally 
+                // rollback the reservation. For now, we'll just log it.
+                console.warn(`⚠️ Token #${tokenId} was reserved but minting failed. 
+                It may need to be manually marked as available.`);
             }
 
             throw error;
