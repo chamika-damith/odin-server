@@ -158,5 +158,25 @@
     "timestamp": 1765408391407,
     "isAirdrop": true,
     "mintType": "airdrop"
+  },
+  {
+    "serialNumber": 10,
+    "metadataTokenId": 4,
+    "hederaTokenId": "0.0.10175359",
+    "rarity": "common",
+    "tierName": "Common Warrior",
+    "odinAllocation": 40000,
+    "ownerAccountId": "0.0.10174943",
+    "mintTransactionId": "0.0.10096557@1765408388.236660407",
+    "paymentTransactionHash": null,
+    "paidAmount": null,
+    "paidCurrency": "AIRDROP",
+    "hbarUsdRate": null,
+    "metadataUri": "https://min.theninerealms.world/metadata/4.json",
+    "ipfsGatewayUrl": null,
+    "mintedAt": "2025-12-10T23:13:23.560Z",
+    "timestamp": 1765408403560,
+    "isAirdrop": true,
+    "mintType": "airdrop"
   }
 ]
