@@ -178,5 +178,25 @@
     "timestamp": 1765490218508,
     "isAirdrop": false,
     "mintType": "public_mint"
+  },
+  {
+    "serialNumber": 10,
+    "metadataTokenId": 12,
+    "hederaTokenId": "0.0.10177262",
+    "rarity": "rare",
+    "tierName": "Rare Champion",
+    "odinAllocation": 300000,
+    "ownerAccountId": "0.0.10176582",
+    "mintTransactionId": "0.0.10096557@1765490200.907426250",
+    "paymentTransactionHash": "0.0.10176582@1765490183.299373679",
+    "paidAmount": 3.06078512,
+    "paidCurrency": "HBAR",
+    "hbarUsdRate": 0.131506,
+    "metadataUri": "https://min.theninerealms.world/metadata/12.json",
+    "ipfsGatewayUrl": null,
+    "mintedAt": "2025-12-11T21:57:01.123Z",
+    "timestamp": 1765490221123,
+    "isAirdrop": false,
+    "mintType": "public_mint"
   }
 ]
