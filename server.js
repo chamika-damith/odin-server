@@ -24,7 +24,7 @@ const { updateFileOnGitHub } = require('./services/githubHelper');
 const claimedFile = path.join(__dirname, 'data', 'claimed-wallets.json');
 const githubClaimedPath = 'data/claimed-wallets.json'; // Path in your GitHub repo
 app.use(cors({
-    origin: ['http://localhost:3001', 'https://odin-frontend-virid.vercel.app', 'https://min.theninerealms.world'],
+    origin: ['https://odin-frontend-virid.vercel.app', 'https://min.theninerealms.world'],
     methods: ['GET', 'POST'],
     credentials: true
 }));
