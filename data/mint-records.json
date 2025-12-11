@@ -138,5 +138,25 @@
     "timestamp": 1765484716089,
     "isAirdrop": false,
     "mintType": "public_mint"
+  },
+  {
+    "serialNumber": 10,
+    "metadataTokenId": 24,
+    "hederaTokenId": "0.0.10177061",
+    "rarity": "legendary",
+    "tierName": "Legendary Hero",
+    "odinAllocation": 1000000,
+    "ownerAccountId": "0.0.10176582",
+    "mintTransactionId": "0.0.10096557@1765485368.331929380",
+    "paymentTransactionHash": "0.0.10176582@1765485355.603537199",
+    "paidAmount": 4.66078302,
+    "paidCurrency": "HBAR",
+    "hbarUsdRate": 0.129081,
+    "metadataUri": "https://min.theninerealms.world/metadata/24.json",
+    "ipfsGatewayUrl": null,
+    "mintedAt": "2025-12-11T20:36:37.865Z",
+    "timestamp": 1765485397865,
+    "isAirdrop": false,
+    "mintType": "public_mint"
   }
 ]
