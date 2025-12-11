@@ -282,11 +282,16 @@ class TierServiceCategorized {
             throw new Error(`Invalid tier: ${tier}`);
         }
 
+        // ✅ FIX: Reload tracker to get latest nextIndex
+        this.loadMintedTrackerSync();
+
         let startIndex = this.mintedTracker.nextIndex[tierKey] || 0;
         const availableTokens = this.rarityMapping[tierKey];
 
+        console.log(`🔍 getNextTokenId: tier=${tierKey}, startIndex=${startIndex}, totalTokens=${availableTokens.length}`);
+
         if (startIndex + quantity > availableTokens.length) {
-            throw new Error(`Not enough ${tier} tokens available`);
+            throw new Error(`Not enough ${tier} tokens available. Requested: ${quantity}, Available: ${availableTokens.length - startIndex}`);
         }
 
         const metadataTokenIds = [];
@@ -296,8 +301,9 @@ class TierServiceCategorized {
 
         console.log(`🎯 Next ${quantity} ${tier} token(s):`, metadataTokenIds);
 
-        // ✅ INCREMENT nextIndex
+        // ✅ FIX: Update nextIndex IMMEDIATELY and save
         this.mintedTracker.nextIndex[tierKey] = startIndex + quantity;
+        this.saveMintedTrackerSync();
 
         return {
             metadataTokenIds: metadataTokenIds,
@@ -365,6 +371,11 @@ class TierServiceCategorized {
                 this.mintedTracker[tierKey].push(tokenId);
             }
         }
+
+        // ✅ FIX: Update nextIndex to match the minted count
+        this.mintedTracker.nextIndex[tierKey] = this.mintedTracker[tierKey].length;
+
+        console.log(`📊 Updated ${tierKey} nextIndex to: ${this.mintedTracker.nextIndex[tierKey]}`);
 
         // Save to file
         this.saveMintedTrackerSync();

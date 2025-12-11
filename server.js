@@ -19,8 +19,10 @@ const app = express();
 app.use(express.json());
 const priceService = require('./services/price-service');
 const mintRecorder = require('./services/mint-recorder');
-const claimedFile = path.join(__dirname, 'data', 'claimed-wallets.json');
+const { updateFileOnGitHub } = require('./services/githubHelper');
 
+const claimedFile = path.join(__dirname, 'data', 'claimed-wallets.json');
+const githubClaimedPath = 'data/claimed-wallets.json'; // Path in your GitHub repo
 app.use(cors({
     origin: ['http://localhost:3001', 'https://odin-frontend-virid.vercel.app', 'https://min.theninerealms.world'],
     methods: ['GET', 'POST'],
@@ -31,7 +33,6 @@ app.use(cors({
 
 // ==================== MINT RECORDS ENDPOINTS ====================
 
-// Load claimed wallets
 function loadClaimedWallets() {
     try {
         const data = fs.readFileSync(claimedFile, 'utf8');
@@ -41,14 +42,114 @@ function loadClaimedWallets() {
     }
 }
 
-// Save claimed wallets
 function saveClaimedWallets(data) {
     const dataDir = path.join(__dirname, 'data');
     if (!fs.existsSync(dataDir)) {
         fs.mkdirSync(dataDir, { recursive: true });
     }
-    fs.writeFileSync(claimedFile, JSON.stringify(data, null, 2));
+    
+    const content = JSON.stringify(data, null, 2);
+    
+    // Save locally
+    fs.writeFileSync(claimedFile, content);
+    console.log('💾 Claimed wallets saved locally');
+    
+    // ✅ SYNC TO GITHUB (async, fire and forget)
+    updateFileOnGitHub(
+        githubClaimedPath,
+        content,
+        `Update claimed wallets: ${Object.keys(data).length} claims - ${new Date().toISOString()}`
+    ).then(() => {
+        console.log('☁️ Claimed wallets synced to GitHub');
+    }).catch((error) => {
+        console.error('⚠️ GitHub sync for claimed wallets failed:', error.message);
+    });
 }
+
+/**
+ * Fix minted tracker from mint records
+ * POST /api/admin/fix-tracker
+ */
+app.post('/api/admin/fix-tracker', async (req, res) => {
+    try {
+        const { adminPassword } = req.body;
+
+        if (adminPassword !== process.env.ADMIN_PASSWORD) {
+            return res.status(403).json({ error: "Unauthorized" });
+        }
+
+        console.log('🔧 Fixing minted tracker from mint records...');
+
+        // Get all mint records
+        const allRecords = mintRecorder.getAllRecords();
+        
+        // Rebuild tracker from records
+        const newTracker = {
+            common: [],
+            rare: [],
+            legendary: [],
+            legendary_1of1: [],
+            nextIndex: {
+                common: 0,
+                rare: 0,
+                legendary: 0,
+                legendary_1of1: 0
+            }
+        };
+
+        // Process each record
+        for (const record of allRecords) {
+            const rarity = record.rarity;
+            const metadataTokenId = record.metadataTokenId;
+
+            if (newTracker[rarity] && !newTracker[rarity].includes(metadataTokenId)) {
+                newTracker[rarity].push(metadataTokenId);
+            }
+        }
+
+        // Update nextIndex based on minted count
+        newTracker.nextIndex.common = newTracker.common.length;
+        newTracker.nextIndex.rare = newTracker.rare.length;
+        newTracker.nextIndex.legendary = newTracker.legendary.length;
+        newTracker.nextIndex.legendary_1of1 = newTracker.legendary_1of1.length;
+
+        console.log('📊 Rebuilt tracker:', newTracker);
+
+        // Save to file
+        const trackerFile = path.join(__dirname, 'services', 'data', 'minted-tracker.json');
+        const dataDir = path.join(__dirname, 'services', 'data');
+        
+        if (!fs.existsSync(dataDir)) {
+            fs.mkdirSync(dataDir, { recursive: true });
+        }
+        
+        const content = JSON.stringify(newTracker, null, 2);
+        fs.writeFileSync(trackerFile, content);
+        
+        // Sync to GitHub
+        try {
+            await updateFileOnGitHub(
+                'services/data/minted-tracker.json',
+                content,
+                `Fix minted tracker: ${new Date().toISOString()}`
+            );
+            console.log('☁️ Fixed tracker synced to GitHub');
+        } catch (githubError) {
+            console.error('⚠️ GitHub sync failed:', githubError.message);
+        }
+
+        res.json({
+            success: true,
+            message: 'Tracker fixed successfully',
+            newTracker: newTracker,
+            recordsProcessed: allRecords.length
+        });
+
+    } catch (error) {
+        console.error('Fix tracker error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
 
 /**
  * Check if user has already claimed
