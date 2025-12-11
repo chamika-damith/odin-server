@@ -1,5 +1,7 @@
 {
-  "common": [],
+  "common": [
+    1
+  ],
   "rare": [],
   "legendary": [],
   "legendary_1of1": [],
