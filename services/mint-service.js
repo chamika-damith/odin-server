@@ -231,7 +231,7 @@ class MintService {
 
             // Prepare metadata bytes - STORE SERVER URL
             const allMetadataBytes = [];
-            const METADATA_BASE_URL = "https://min.theninerealms.world/metadata";
+            const METADATA_BASE_URL = "https://min.theninerealms.world/metadata-odin";
             let metadataUrl = '';
 
             for (let i = 0; i < metadataTokenIds.length; i++) {
@@ -383,7 +383,7 @@ class MintService {
 
     async loadMetadata(tokenId) {
         try {
-            const METADATA_BASE_URL = "https://min.theninerealms.world/metadata";
+            const METADATA_BASE_URL = "https://min.theninerealms.world/metadata-odin";
             const metadataUrl = `${METADATA_BASE_URL}/${tokenId}.json`;
 
             console.log(`📄 Fetching metadata from server: ${metadataUrl}`);
@@ -576,7 +576,7 @@ class MintService {
                     };
                 }
             } else {
-                const METADATA_BASE_URL = "https://min.theninerealms.world/metadata";
+                const METADATA_BASE_URL = "https://min.theninerealms.world/metadata-odin";
                 metadataUri = `${METADATA_BASE_URL}/${tokenId}.json`;
                 console.log(`📄 Fetching from server: ${metadataUri}`);
                 try {

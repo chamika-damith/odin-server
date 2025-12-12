@@ -2218,7 +2218,7 @@ app.post('/api/airdrop/batch', async (req, res) => {
                         paidCurrency: 'AIRDROP',
                         hbarUsdRate: 0,
                         metadataUrl: mintResult.metadataUrl,
-                        metadataGatewayUrl: mintResult.metadataUrl || `https://min.theninerealms.world/metadata/${mintResult.metadataTokenId}.json`,
+                        metadataGatewayUrl: mintResult.metadataUrl || `https://min.theninerealms.world/metadata-odin/${mintResult.metadataTokenId}.json`,
                         mintedAt: new Date().toISOString(),
                         isAirdrop: true
                     });
