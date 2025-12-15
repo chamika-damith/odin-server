@@ -358,5 +358,25 @@
     "timestamp": 1765830407316,
     "isAirdrop": true,
     "mintType": "airdrop"
+  },
+  {
+    "serialNumber": 26,
+    "metadataTokenId": 90,
+    "hederaTokenId": "0.0.10178173",
+    "rarity": "legendary",
+    "tierName": "Legendary Hero",
+    "odinAllocation": 1000000,
+    "ownerAccountId": "0.0.855365",
+    "mintTransactionId": "0.0.10178166@1765830406.762149220",
+    "paymentTransactionHash": null,
+    "paidAmount": null,
+    "paidCurrency": "AIRDROP_CLAIM",
+    "hbarUsdRate": null,
+    "metadataUri": "https://min.theninerealms.world/metadata-odin/90.json",
+    "ipfsGatewayUrl": null,
+    "mintedAt": "2025-12-15T20:26:59.673Z",
+    "timestamp": 1765830419673,
+    "isAirdrop": true,
+    "mintType": "airdrop"
   }
 ]
