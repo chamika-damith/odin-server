@@ -248,12 +248,12 @@ app.get('/api/airdrop/claim-status/:accountId', async (req, res) => {
 
 app.post('/api/airdrop/claim', async (req, res) => {
     console.log('\n🎁 CLAIM AIRDROP');
-
+    
     let mintService = null;
-
+    
     try {
         const { userAccountId, tier } = req.body;
-
+        
         // Validate inputs
         if (!userAccountId || !tier) {
             return res.status(400).json({
@@ -261,7 +261,7 @@ app.post('/api/airdrop/claim', async (req, res) => {
                 error: 'Missing userAccountId or tier'
             });
         }
-
+        
         // Validate account format
         if (!userAccountId.match(/^\d+\.\d+\.\d+$/)) {
             return res.status(400).json({
@@ -269,7 +269,7 @@ app.post('/api/airdrop/claim', async (req, res) => {
                 error: 'Invalid account format. Use: 0.0.XXXXX'
             });
         }
-
+        
         // ✅ STEP 1: Check if already claimed
         const claimedWallets = loadClaimedWallets();
         if (claimedWallets[userAccountId]) {
@@ -279,11 +279,11 @@ app.post('/api/airdrop/claim', async (req, res) => {
                 claimedAt: claimedWallets[userAccountId].claimedAt
             });
         }
-
+        
         // ✅ STEP 2: CHECK TOKEN ASSOCIATION BEFORE MINTING
         console.log(`🔍 Checking token association for ${userAccountId}...`);
         const isAssociated = await checkTokenAssociation(userAccountId);
-
+        
         if (!isAssociated) {
             console.log(`❌ User ${userAccountId} has not associated with token ${process.env.TOKEN_ID}`);
             return res.status(400).json({
@@ -294,9 +294,9 @@ app.post('/api/airdrop/claim', async (req, res) => {
                 requiresAssociation: true
             });
         }
-
+        
         console.log(`✅ Token association confirmed for ${userAccountId}`);
-
+        
         // ✅ STEP 3: Determine NFTs to mint based on tier
         const nftsToMint = [];
         if (tier === 'tier1') {
@@ -311,29 +311,54 @@ app.post('/api/airdrop/claim', async (req, res) => {
                 error: 'Invalid tier. Must be: tier1, tier2, or tier3'
             });
         }
-
+        
         console.log(`📦 Minting: ${nftsToMint.join(', ')} for ${userAccountId}`);
-
+        
         // ✅ STEP 4: Mint NFTs
         mintService = new MintService();
         const mintedNFTs = [];
         const failedMints = [];
-
+        const odinAllocations = { common: 40000, rare: 300000, legendary: 1000000 };
+        
         for (const rarity of nftsToMint) {
             console.log(`\n🎨 Minting ${rarity}...`);
-
+            
             try {
                 const result = await mintService.mintByRarity(userAccountId, rarity, 1);
-
+                
                 mintedNFTs.push({
                     rarity: rarity,
                     tokenId: result.tokens ? result.tokens[0] : result.metadataTokenId,
                     serialNumber: result.serialNumbers ? result.serialNumbers[0] : result.serialNumber,
                     transactionId: result.transactionId
                 });
-
+                
                 console.log(`✅ ${rarity} minted: Serial #${result.serialNumbers ? result.serialNumbers[0] : result.serialNumber}`);
-
+                
+                // ✅ RECORD THE AIRDROP MINT
+                try {
+                    await mintRecorder.recordMint({
+                        serialNumber: result.serialNumbers ? result.serialNumbers[0] : result.serialNumber,
+                        metadataTokenId: result.tokens ? result.tokens[0] : result.metadataTokenId,
+                        tokenId: process.env.TOKEN_ID,
+                        rarity: rarity,
+                        odinAllocation: odinAllocations[rarity],
+                        owner: userAccountId,
+                        userAccountId: userAccountId,
+                        transactionId: result.transactionId,
+                        paymentTransactionHash: null,
+                        paidAmount: 0,
+                        paidCurrency: 'AIRDROP',
+                        hbarUsdRate: 0,
+                        metadataUrl: result.metadataUrls ? result.metadataUrls[0] : result.metadataUrl,
+                        mintedAt: new Date().toISOString(),
+                        isAirdrop: true
+                    });
+                    console.log(`📝 Recorded airdrop mint for Serial #${result.serialNumbers ? result.serialNumbers[0] : result.serialNumber}`);
+                } catch (recordError) {
+                    console.error(`⚠️ Failed to record airdrop:`, recordError.message);
+                }
+                
             } catch (mintError) {
                 console.error(`❌ ${rarity} failed:`, mintError.message);
                 failedMints.push({
@@ -344,10 +369,10 @@ app.post('/api/airdrop/claim', async (req, res) => {
                 break;
             }
         }
-
+        
         mintService.close();
         mintService = null;
-
+        
         // ✅ STEP 5: Handle results
         if (mintedNFTs.length === 0) {
             // All mints failed
@@ -357,7 +382,7 @@ app.post('/api/airdrop/claim', async (req, res) => {
                 details: failedMints
             });
         }
-
+        
         // ✅ STEP 6: Mark as claimed (even if partial success)
         claimedWallets[userAccountId] = {
             tier: tier,
@@ -366,7 +391,7 @@ app.post('/api/airdrop/claim', async (req, res) => {
             failedMints: failedMints.length > 0 ? failedMints : undefined
         };
         saveClaimedWallets(claimedWallets);
-
+        
         // ✅ STEP 7: Return response
         if (mintedNFTs.length === nftsToMint.length) {
             // Full success
@@ -385,14 +410,14 @@ app.post('/api/airdrop/claim', async (req, res) => {
                 failedMints: failedMints
             });
         }
-
+        
     } catch (error) {
         console.error('❌ Claim error:', error);
-
+        
         if (mintService) {
-            try { mintService.close(); } catch (e) { }
+            try { mintService.close(); } catch (e) {}
         }
-
+        
         res.status(500).json({
             success: false,
             error: error.message
