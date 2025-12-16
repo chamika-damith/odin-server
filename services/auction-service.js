@@ -25,7 +25,7 @@ class AuctionService {
                 name: `Odin Rare 1-of-1 #${i+1}`,
                 tier: 'rare_1of1',
                 isSpecial: true,
-                startingBid: 7200,  // 7,200 HBAR (~$500)
+                startingBid: 2,  // 7,200 HBAR (~$500)
                 description: "Exclusive rare 1-of-1 auction edition"
             })),
             legendary1of1: Array(2).fill().map((_, i) => ({
@@ -33,7 +33,7 @@ class AuctionService {
                 name: `Odin Legendary 1-of-1 #${i+1}`,
                 tier: 'legendary_1of1',
                 isSpecial: true,
-                startingBid: 22000,  // 22,000 HBAR (~$1,500)
+                startingBid: 3,  // 22,000 HBAR (~$1,500)
                 description: "Ultra-rare legendary 1-of-1 auction masterpiece"
             }))
         };

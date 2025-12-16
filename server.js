@@ -20,11 +20,12 @@ app.use(express.json());
 const priceService = require('./services/price-service');
 const mintRecorder = require('./services/mint-recorder');
 const { updateFileOnGitHub } = require('./services/githubHelper');
+const githubSyncService = require('./services/github-sync-service');
 
 const claimedFile = path.join(__dirname, 'data', 'claimed-wallets.json');
 const githubClaimedPath = 'data/claimed-wallets.json'; // Path in your GitHub repo
 app.use(cors({
-    origin: ['https://odin-frontend-virid.vercel.app', 'https://min.theninerealms.world'],
+    origin: ['http://localhost:3001', 'https://odin-frontend-virid.vercel.app', 'https://min.theninerealms.world'],
     methods: ['GET', 'POST'],
     credentials: true
 }));
@@ -172,115 +173,65 @@ app.get('/api/airdrop/claim-status/:accountId', async (req, res) => {
     }
 });
 
-/**
- * Claim airdrop NFTs
- * POST /api/airdrop/claim
- * Body: { userAccountId: "0.0.xxx", tier: "tier1" | "tier2" | "tier3" }
- */
 app.post('/api/airdrop/claim', async (req, res) => {
-    console.log('\n🎁 CLAIM AIRDROP ENDPOINT CALLED');
-    console.log('================================================');
-
+    console.log('\n🎁 CLAIM AIRDROP');
+    
     try {
         const { userAccountId, tier } = req.body;
-
-        // Validate inputs
+        
         if (!userAccountId || !tier) {
             return res.status(400).json({
                 success: false,
                 error: 'Missing userAccountId or tier'
             });
         }
-
-        if (!['tier1', 'tier2', 'tier3'].includes(tier)) {
-            return res.status(400).json({
-                success: false,
-                error: 'Invalid tier. Must be tier1, tier2, or tier3'
-            });
-        }
-
-        console.log(`👤 User: ${userAccountId}`);
-        console.log(`🎯 Tier: ${tier}`);
-
+        
         // Check if already claimed
         const claimedWallets = loadClaimedWallets();
         if (claimedWallets[userAccountId]) {
-            console.log('❌ Already claimed');
             return res.status(400).json({
                 success: false,
-                error: 'You have already claimed your airdrop'
+                error: 'Already claimed'
             });
         }
-
-        // Determine which NFTs to mint based on tier
+        
+        // Determine NFTs to mint
         const nftsToMint = [];
-
-        if (tier === 'tier1') {
-            nftsToMint.push('common');
-        } else if (tier === 'tier2') {
-            nftsToMint.push('common', 'rare');
-        } else if (tier === 'tier3') {
-            nftsToMint.push('common', 'rare', 'legendary');
-        }
-
-        console.log(`📦 NFTs to mint: ${nftsToMint.join(', ')}`);
-
-        // Mint each NFT
+        if (tier === 'tier1') nftsToMint.push('common');
+        else if (tier === 'tier2') nftsToMint.push('common', 'rare');
+        else if (tier === 'tier3') nftsToMint.push('common', 'rare', 'legendary');
+        
+        console.log(`Minting: ${nftsToMint.join(', ')}`);
+        
         const mintService = new MintService();
         const mintedNFTs = [];
-        const errors = [];
-
+        
+        // Mint each NFT with GitHub-first approach
         for (const rarity of nftsToMint) {
-            console.log(`\n🎨 Minting ${rarity} NFT...`);
-
+            console.log(`\n🎨 Minting ${rarity}...`);
+            
             try {
-                const result = await mintService.mintByRarity(userAccountId, rarity);
-
+                const result = await mintService.mintByRarity(userAccountId, rarity, 1);
+                
                 mintedNFTs.push({
                     rarity: rarity,
-                    serialNumber: result.serialNumber,
-                    metadataTokenId: result.metadataTokenId,
+                    tokenId: result.tokens[0],
+                    serialNumber: result.serialNumbers[0],
                     transactionId: result.transactionId
                 });
-
-                console.log(`   ✅ Minted ${rarity} - Serial #${result.serialNumber}`);
-
-                // Record mint
-                try {
-                    const odinAllocations = { common: 40000, rare: 300000, legendary: 1000000 };
-                    await mintRecorder.recordMint({
-                        serialNumber: result.serialNumber,
-                        metadataTokenId: result.metadataTokenId,
-                        tokenId: process.env.TOKEN_ID,
-                        rarity: rarity,
-                        odinAllocation: odinAllocations[rarity],
-                        owner: userAccountId,
-                        userAccountId: userAccountId,
-                        transactionId: result.transactionId,
-                        paymentTransactionHash: null,
-                        paidAmount: 0,
-                        paidCurrency: 'AIRDROP_CLAIM',
-                        hbarUsdRate: 0,
-                        metadataUrl: result.metadataUrl,
-                        mintedAt: new Date().toISOString(),
-                        isAirdrop: true
-                    });
-                } catch (recordError) {
-                    console.error(`   ⚠️ Failed to record mint:`, recordError.message);
-                }
-
+                
+                console.log(`✅ ${rarity} minted: Token #${result.tokens[0]}`);
+                
             } catch (mintError) {
-                console.error(`   ❌ Failed to mint ${rarity}:`, mintError.message);
-                errors.push({
-                    rarity: rarity,
-                    error: mintError.message
-                });
+                console.error(`❌ ${rarity} failed:`, mintError.message);
+                // If one fails, mark as claimed anyway? Or rollback?
+                // For now, continue but mark as partial
             }
         }
-
+        
         mintService.close();
-
-        // If at least one NFT was minted, mark as claimed
+        
+        // Mark as claimed in GitHub
         if (mintedNFTs.length > 0) {
             claimedWallets[userAccountId] = {
                 tier: tier,
@@ -289,41 +240,170 @@ app.post('/api/airdrop/claim', async (req, res) => {
             };
             saveClaimedWallets(claimedWallets);
         }
-
+        
         // Response
         if (mintedNFTs.length === nftsToMint.length) {
-            // All successful
-            console.log('\n✅ All NFTs claimed successfully!');
-            return res.json({
+            res.json({
                 success: true,
-                message: `Successfully claimed ${mintedNFTs.length} NFT(s)!`,
+                message: `Claimed ${mintedNFTs.length} NFT(s)!`,
                 nfts: mintedNFTs
             });
-        } else if (mintedNFTs.length > 0) {
-            // Partial success
-            console.log('\n⚠️ Partial claim - some NFTs failed');
-            return res.json({
-                success: true,
-                message: `Claimed ${mintedNFTs.length}/${nftsToMint.length} NFTs. Some failed.`,
-                nfts: mintedNFTs,
-                errors: errors
-            });
         } else {
-            // All failed
-            console.log('\n❌ All mints failed');
-            return res.status(500).json({
-                success: false,
-                error: errors[0]?.error || 'Failed to mint NFTs',
-                errors: errors
+            res.json({
+                success: true,
+                message: `Partially claimed ${mintedNFTs.length}/${nftsToMint.length} NFTs`,
+                nfts: mintedNFTs,
+                warning: 'Some NFTs failed to mint'
             });
         }
-
+        
     } catch (error) {
-        console.error('❌ CLAIM ERROR:', error.message);
-        return res.status(500).json({
+        console.error('Claim error:', error);
+        res.status(500).json({
             success: false,
             error: error.message
         });
+    }
+});
+
+/**
+ * Verify GitHub consistency
+ * GET /api/admin/verify-github
+ */
+app.get('/api/admin/verify-github', async (req, res) => {
+    try {
+        const { adminPassword } = req.query;
+        if (adminPassword !== process.env.ADMIN_PASSWORD) {
+            return res.status(403).json({ error: "Unauthorized" });
+        }
+        
+        console.log('🔍 Verifying GitHub consistency...');
+        
+        // 1. Check mint records vs GitHub tracker
+        const allRecords = mintRecorder.getAllRecords();
+        const mintService = new MintService();
+        const tierService = mintService.tierService;
+        
+        const recordTokenIds = {
+            common: [],
+            rare: [],
+            legendary: [],
+            legendary_1of1: []
+        };
+        
+        // Get all token IDs from mint records
+        for (const record of allRecords) {
+            const rarity = record.rarity;
+            const tokenId = record.metadataTokenId;
+            if (recordTokenIds[rarity] && !recordTokenIds[rarity].includes(tokenId)) {
+                recordTokenIds[rarity].push(tokenId);
+            }
+        }
+        
+        // Compare with GitHub tracker
+        const discrepancies = {};
+        for (const tier of ['common', 'rare', 'legendary', 'legendary_1of1']) {
+            const inRecords = recordTokenIds[tier].sort((a, b) => a - b);
+            const inGitHub = tierService.mintedTracker[tier].sort((a, b) => a - b);
+            
+            const missingInGitHub = inRecords.filter(id => !inGitHub.includes(id));
+            const extraInGitHub = inGitHub.filter(id => !inRecords.includes(id));
+            
+            if (missingInGitHub.length > 0 || extraInGitHub.length > 0) {
+                discrepancies[tier] = {
+                    missingInGitHub,
+                    extraInGitHub,
+                    recordCount: inRecords.length,
+                    githubCount: inGitHub.length
+                };
+            }
+        }
+        
+        mintService.close();
+        
+        const hasIssues = Object.keys(discrepancies).length > 0;
+        
+        res.json({
+            success: true,
+            consistent: !hasIssues,
+            discrepancies: hasIssues ? discrepancies : null,
+            summary: {
+                totalMints: allRecords.length,
+                mintRecordsByTier: Object.keys(recordTokenIds).reduce((acc, tier) => {
+                    acc[tier] = recordTokenIds[tier].length;
+                    return acc;
+                }, {}),
+                message: hasIssues ? 'Run /api/admin/fix-github' : 'GitHub is consistent'
+            }
+        });
+        
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * Fix GitHub inconsistencies
+ * POST /api/admin/fix-github
+ */
+app.post('/api/admin/fix-github', async (req, res) => {
+    try {
+        const { adminPassword } = req.body;
+        if (adminPassword !== process.env.ADMIN_PASSWORD) {
+            return res.status(403).json({ error: "Unauthorized" });
+        }
+        
+        console.log('🔧 Fixing GitHub inconsistencies...');
+        
+        // Get all mint records (source of truth)
+        const allRecords = mintRecorder.getAllRecords();
+        
+        // Build correct state from mint records
+        const correctState = {
+            common: [],
+            rare: [],
+            legendary: [],
+            legendary_1of1: [],
+            nextIndex: { common: 0, rare: 0, legendary: 0, legendary_1of1: 0 }
+        };
+        
+        for (const record of allRecords) {
+            const rarity = record.rarity;
+            const tokenId = record.metadataTokenId;
+            
+            if (correctState[rarity] && !correctState[rarity].includes(tokenId)) {
+                correctState[rarity].push(tokenId);
+            }
+        }
+        
+        // Sort and calculate nextIndex
+        const mintService = new MintService();
+        for (const tier of ['common', 'rare', 'legendary', 'legendary_1of1']) {
+            correctState[tier].sort((a, b) => a - b);
+            if (correctState[tier].length > 0) {
+                const maxToken = correctState[tier][correctState[tier].length - 1];
+                const index = mintService.tierService.rarityMapping[tier].indexOf(maxToken);
+                correctState.nextIndex[tier] = index + 1;
+            }
+        }
+        
+        // Update GitHub
+        mintService.tierService.mintedTracker = correctState;
+        mintService.tierService.saveMintedTrackerSync();
+        
+        mintService.close();
+        
+        console.log('✅ GitHub fixed');
+        
+        res.json({
+            success: true,
+            message: 'GitHub fixed from mint records',
+            newState: correctState,
+            recordsUsed: allRecords.length
+        });
+        
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 
@@ -747,7 +827,7 @@ app.get('/api/mint/check-payment/:accountId', async (req, res) => {
         const { accountId } = req.params;
 
         // Simple check: Query Mirror Node for user's last transaction
-        const mirrorUrl = `https://mainnet-public.mirrornode.hedera.com/api/v1/transactions?account.id=${accountId}&limit=1&order=desc`;
+        const mirrorUrl = `https://testnet.mirrornode.hedera.com/api/v1/transactions?account.id=${accountId}&limit=1&order=desc`;
         const response = await fetch(mirrorUrl);
 
         if (!response.ok) {
@@ -879,7 +959,7 @@ app.post('/api/mint/verify-and-mint', async (req, res) => {
 
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                const mirrorUrl = `https://mainnet-public.mirrornode.hedera.com/api/v1/transactions?account.id=${userAccountId}&transactiontype=CRYPTOTRANSFER&limit=10&order=desc`;
+                const mirrorUrl = `https://testnet.mirrornode.hedera.com/api/v1/transactions?account.id=${userAccountId}&transactiontype=CRYPTOTRANSFER&limit=10&order=desc`;
                 const mirrorResponse = await fetch(mirrorUrl);
 
                 if (!mirrorResponse.ok) {
@@ -1105,7 +1185,7 @@ app.post('/api/mint/verify-and-mint', async (req, res) => {
 app.get('/api/debug/token-info', async (req, res) => {
     try {
         const { TokenInfoQuery } = require("@hashgraph/sdk");
-        const client = Client.forMainnet();
+        const client = Client.forTestnet();
         client.setOperator(process.env.OPERATOR_ID, process.env.OPERATOR_KEY);
 
         const query = new TokenInfoQuery()
@@ -1356,7 +1436,7 @@ app.get('/api/simple-transactions/:accountId', async (req, res) => {
         }
 
         // Build SIMPLE URL - NO timestamp filters
-        const mirrorUrl = `https://mainnet-public.mirrornode.hedera.com/api/v1/transactions?account.id=${accountId}&limit=${limit}&order=desc`;
+        const mirrorUrl = `https://testnet.mirrornode.hedera.com/api/v1/transactions?account.id=${accountId}&limit=${limit}&order=desc`;
 
         console.log(`🔍 Calling: ${mirrorUrl}`);
 
@@ -1395,7 +1475,7 @@ app.get('/api/simple-transactions/:accountId', async (req, res) => {
                 counterparty: counterparty,
                 fee: (parseInt(tx.charged_tx_fee || 0) / 100000000).toFixed(4) + ' HBAR',
                 status: tx.result === 'SUCCESS' ? 'success' : 'failed',
-                hashscan: `https://hashscan.io/mainnet/transaction/${tx.transaction_id}`
+                hashscan: `https://hashscan.io/testnet/transaction/${tx.transaction_id}`
             };
         });
 
@@ -1513,23 +1593,23 @@ app.get('/api/mint/pricing', async (req, res) => {
         const mintService = new MintService();
         const pricing = {
             common: {
-                price: 1400,//14, // Changed from "14 HBAR" to 14
+                price: 1,//14, // Changed from "14 HBAR" to 14
                 //tinybars: new Hbar(14).toTinybars().toString(),
-                tinybars: new Hbar(1400).toTinybars().toString(),
+                tinybars: new Hbar(1).toTinybars().toString(),
                 odinAllocation: 40000,
                 available: mintService.getAvailableByRarity('common')
             },
             rare: {
-                price: 7200,//72, // Changed from "72 HBAR" to 72
+                price: 2,//72, // Changed from "72 HBAR" to 72
                 //tinybars: new Hbar(72).toTinybars().toString(),
-                tinybars: new Hbar(7200).toTinybars().toString(),
+                tinybars: new Hbar(2).toTinybars().toString(),
                 odinAllocation: 300000,
                 available: mintService.getAvailableByRarity('rare')
             },
             legendary: {
-                price: 22000,//220, // Changed from "220 HBAR" to 220
+                price: 3,//220, // Changed from "220 HBAR" to 220
                 //tinybars: new Hbar(220).toTinybars().toString(),
-                tinybars: new Hbar(22000).toTinybars().toString(),
+                tinybars: new Hbar(3).toTinybars().toString(),
                 odinAllocation: 1000000,
                 available: mintService.getAvailableByRarity('legendary')
             }
@@ -1641,7 +1721,7 @@ app.get('/api/mint/test', (req, res) => {
     console.log("📝 Account:", process.env.OPERATOR_ID);
 
     // 2. FIXED CLIENT CONFIGURATION
-    const client = Client.forMainnet();
+    const client = Client.forTestnet();
 
     try {
         // IMPROVED KEY PARSING - HANDLES HEX FORMAT
@@ -1791,7 +1871,7 @@ async function deployNFT() {
     console.log("📝 Account:", process.env.OPERATOR_ID);
 
     // 2. CLIENT CONFIGURATION
-    const client = Client.forMainnet();
+    const client = Client.forTestnet();
 
     try {
         // Parse operator key (handle 0x prefix for raw hex)
@@ -2012,7 +2092,7 @@ app.post('/api/deploy', async (req, res) => {
             return res.json({
                 success: true,
                 message: "Deployment submitted but receipt timed out. Check HashScan for token ID.",
-                checkUrl: "https://hashscan.io/mainnet"
+                checkUrl: "https://hashscan.io/testnet"
             });
         }
 
@@ -2509,7 +2589,7 @@ app.post('/api/upgrade/name', async (req, res) => {
             return res.status(403).json({ error: "Unauthorized" });
         }
 
-        const client = Client.forMainnet();
+        const client = Client.forTestnet();
         client.setOperator(process.env.OPERATOR_ID, process.env.OPERATOR_KEY);
         const upgradeService = new UpgradeService(client, process.env.TOKEN_ID);
 
@@ -2528,7 +2608,7 @@ app.post('/api/upgrade/royalties', async (req, res) => {
             return res.status(403).json({ error: "Unauthorized" });
         }
 
-        const client = Client.forMainnet();
+        const client = Client.forTestnet();
         client.setOperator(process.env.OPERATOR_ID, process.env.OPERATOR_KEY);
         const upgradeService = new UpgradeService(client, process.env.TOKEN_ID);
 
@@ -2547,7 +2627,7 @@ app.post('/api/upgrade/pause', async (req, res) => {
             return res.status(403).json({ error: "Unauthorized" });
         }
 
-        const client = Client.forMainnet();
+        const client = Client.forTestnet();
         client.setOperator(process.env.OPERATOR_ID, process.env.OPERATOR_KEY);
         const upgradeService = new UpgradeService(client, process.env.TOKEN_ID);
 
@@ -2566,7 +2646,7 @@ app.post('/api/upgrade/unpause', async (req, res) => {
             return res.status(403).json({ error: "Unauthorized" });
         }
 
-        const client = Client.forMainnet();
+        const client = Client.forTestnet();
         client.setOperator(process.env.OPERATOR_ID, process.env.OPERATOR_KEY);
         const upgradeService = new UpgradeService(client, process.env.TOKEN_ID);
 

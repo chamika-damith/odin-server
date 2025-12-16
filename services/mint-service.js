@@ -15,7 +15,7 @@ const mintRecorder = require('./mint-recorder');
 
 class MintService {
     constructor() {
-        this.client = Client.forMainnet();
+        this.client = Client.forTestnet();
 
         // Parse OPERATOR_KEY based on format
         const opKey = process.env.OPERATOR_KEY.trim();
@@ -57,9 +57,9 @@ class MintService {
         */
         // Pricing in HBAR
         this.usdPricing = {
-            common: 100,    // $100
-            rare: 500,      // $500
-            legendary: 1500 // $1500
+            common: 0.1,    // $100
+            rare: 0.2,      // $500
+            legendary: 0.3 // $1500
         };
 
         // Keep for backward compatibility - will be updated dynamically
@@ -70,9 +70,9 @@ class MintService {
         };*/
 
         this.pricing = {
-            common: new Hbar(1400),  // Fallback values
-            rare: new Hbar(7200),
-            legendary: new Hbar(22000)
+            common: new Hbar(1),  // Fallback values
+            rare: new Hbar(2),
+            legendary: new Hbar(3)
         };
 
 
@@ -211,72 +211,49 @@ class MintService {
         return this.paymentService.getPaymentStatus(paymentId);
     }
 
+    async executeMintTransaction(userAccountId, rarity, metadataTokenIds) {
+        console.log(`🔄 Executing mint for ${metadataTokenIds.length} token(s)...`);
 
-    async mintByRarity(userAccountId, rarity, quantity = 1) {
-        console.log(`\n🎨 MINTING ${rarity} NFT FOR ${userAccountId}`);
+        const METADATA_BASE_URL = "https://min.theninerealms.world/metadata-odin";
+        const allMetadataBytes = [];
+        const metadataUrls = [];
 
-        try {
-            // 🔒 USE SAFE VERSION WITH MUTEX
-            const tokenData = await this.tierService.getNextTokenIdSafe(rarity, quantity);
+        // Prepare metadata for each token
+        for (const tokenId of metadataTokenIds) {
+            const metadataUrl = `${METADATA_BASE_URL}/${tokenId}.json`;
+            metadataUrls.push(metadataUrl);
+            const bytes = Uint8Array.from(Buffer.from(metadataUrl, 'utf8'));
+            allMetadataBytes.push(bytes);
+            console.log(`   Token ${tokenId}: ${metadataUrl}`);
+        }
 
-            if (!tokenData.metadataTokenIds) {
-                throw new Error('Tier service did not return metadataTokenIds');
-            }
+        // Mint with supply key
+        const supplyKey = PrivateKey.fromStringDer(process.env.SUPPLY_KEY);
 
-            const metadataTokenIds = tokenData.metadataTokenIds;
-            console.log(`✅ Metadata token IDs:`, metadataTokenIds)
+        const mintTx = new TokenMintTransaction()
+            .setTokenId(this.tokenId)
+            .setMetadata(allMetadataBytes)
+            .freezeWith(this.client);
 
-            // Use SUPPLY_KEY for minting
-            const supplyKey = PrivateKey.fromStringDer(process.env.SUPPLY_KEY);
+        const signedTx = await mintTx.sign(supplyKey);
+        const txResponse = await signedTx.execute(this.client);
 
-            // Prepare metadata bytes - STORE SERVER URL
-            const allMetadataBytes = [];
-            const METADATA_BASE_URL = "https://min.theninerealms.world/metadata-odin";
-            let metadataUrl = '';
+        console.log('⏳ Waiting for receipt...');
+        const receipt = await txResponse.getReceipt(this.client);
 
-            for (let i = 0; i < metadataTokenIds.length; i++) {
-                const tokenId = metadataTokenIds[i];
+        if (receipt.status.toString() !== 'SUCCESS') {
+            throw new Error(`Minting failed with status: ${receipt.status.toString()}`);
+        }
 
-                // Create the server metadata URL
-                metadataUrl = `${METADATA_BASE_URL}/${tokenId}.json`;
+        // Get serial numbers
+        const serialNumbers = receipt.serials.map(sn => sn.toNumber());
+        console.log(`✅ Minted! Serials:`, serialNumbers);
 
-                // Convert to bytes (UTF-8 encoded string)
-                const bytes = Uint8Array.from(Buffer.from(metadataUrl, 'utf8'));
-                allMetadataBytes.push(bytes);
-
-                console.log(`📄 Metadata for token #${tokenId}: ${metadataUrl}`);
-            }
-
-            // Mint with supply key
-            const mintTx = new TokenMintTransaction()
-                .setTokenId(this.tokenId)
-                .setMetadata(allMetadataBytes)
-                .freezeWith(this.client);
-
-            // Sign and execute
-            const signedTx = await mintTx.sign(supplyKey);
-            const txResponse = await signedTx.execute(this.client);
-
-            console.log('⏳ Waiting for receipt...');
-            const receipt = await txResponse.getReceipt(this.client);
-
-            if (receipt.status.toString() !== 'SUCCESS') {
-                throw new Error(`Minting failed with status: ${receipt.status.toString()}`);
-            }
-
-            // Get serial number from receipt
-            if (!receipt.serials || receipt.serials.length === 0) {
-                throw new Error('No serial number returned from mint transaction');
-            }
-
-            const serialNumber = receipt.serials[0].toNumber();
-            console.log(`✅ Transaction successful! Serial: ${serialNumber || 'N/A'}`);
-
-            // Transfer NFT to user
-            console.log(`📤 Transferring NFT #${serialNumber} to ${userAccountId}...`);
-
+        // Transfer each NFT to user
+        console.log(`📤 Transferring NFTs to ${userAccountId}...`);
+        for (let i = 0; i < serialNumbers.length; i++) {
             const transferTx = await new TransferTransaction()
-                .addNftTransfer(this.tokenId, serialNumber, this.treasuryId, userAccountId)
+                .addNftTransfer(this.tokenId, serialNumbers[i], this.treasuryId, userAccountId)
                 .freezeWith(this.client);
 
             const opKey = process.env.OPERATOR_KEY.trim();
@@ -288,43 +265,99 @@ class MintService {
             } else {
                 operatorKey = PrivateKey.fromStringED25519(opKey);
             }
+
             const signedTransferTx = await transferTx.sign(operatorKey);
             const transferResponse = await signedTransferTx.execute(this.client);
             const transferReceipt = await transferResponse.getReceipt(this.client);
 
             if (transferReceipt.status.toString() !== 'SUCCESS') {
-                throw new Error(`Transfer failed with status: ${transferReceipt.status.toString()}`);
+                throw new Error(`Transfer ${i + 1} failed`);
             }
-
-            console.log(`✅ NFT transferred to ${userAccountId}`);
-
-            console.log('📝 Recording mint to database...');
-
-            // Mark as minted
-            await this.tierService.markAsMinted(rarity, metadataTokenIds);
-
-            // Return result WITH SERVER METADATA URL
-            const result = {
-                success: true,
-                tokenId: this.tokenId.toString(),
-                metadataTokenId: metadataTokenIds[0],
-                serialNumber: serialNumber,
-                rarity: rarity,
-                odinAllocation: this.odinAllocation[rarity],
-                transactionId: txResponse.transactionId.toString(),
-                metadataUrl: metadataUrl
-            };
-
-            console.log(`✅ MINTED: Metadata URL: ${metadataUrl}`);
-            return result;
-
-        } catch (error) {
-            console.error(`❌ MINTING ERROR:`, error.message);
-            console.error('Full error:', error);
-            throw new Error(`Minting failed: ${error.message}`);
         }
+
+        console.log(`✅ All NFTs transferred to ${userAccountId}`);
+
+        return {
+            serialNumbers: serialNumbers,
+            transactionId: txResponse.transactionId.toString(),
+            metadataUrls: metadataUrls
+        };
     }
 
+    async mintByRarity(userAccountId, rarity, quantity = 1) {
+        console.log(`\n🚀 START MINT: ${quantity} ${rarity} NFT(s) for ${userAccountId}`);
+
+        let reservedTokens = null;
+        let mintResult = null;
+
+        try {
+            // ========== PHASE 1: GITHUB COMMIT ==========
+            console.log(`\n📋 PHASE 1: Reserving tokens in GitHub...`);
+            reservedTokens = await this.tierService.reserveAndCommit(rarity, quantity);
+            console.log(`✅ GitHub reserved: ${reservedTokens.join(', ')}`);
+
+            // ========== PHASE 2: MINT ON HEDERA ==========
+            console.log(`\n🔄 PHASE 2: Minting on Hedera blockchain...`);
+            mintResult = await this.executeMintTransaction(userAccountId, rarity, reservedTokens);
+            console.log(`✅ Hedera mint successful! Serial: ${mintResult.serialNumber}`);
+
+            // ========== PHASE 3: FINALIZE GITHUB ==========
+            console.log(`\n🏁 PHASE 3: Finalizing GitHub...`);
+            await this.tierService.finalizeMint(rarity, reservedTokens, mintResult);
+            console.log(`✅ GitHub finalized`);
+
+            // ========== PHASE 4: RECORD MINT ==========
+            console.log(`\n📝 PHASE 4: Recording mint...`);
+            for (let i = 0; i < reservedTokens.length; i++) {
+                const tokenId = reservedTokens[i];
+                await mintRecorder.recordMint({
+                    serialNumber: mintResult.serialNumbers?.[i] || mintResult.serialNumber + i,
+                    metadataTokenId: tokenId,
+                    tokenId: process.env.TOKEN_ID,
+                    rarity: rarity,
+                    odinAllocation: this.odinAllocation[rarity],
+                    owner: userAccountId,
+                    userAccountId: userAccountId,
+                    transactionId: mintResult.transactionId,
+                    metadataUrl: mintResult.metadataUrls?.[i] || mintResult.metadataUrl,
+                    mintedAt: new Date().toISOString(),
+                    isAirdrop: false
+                });
+            }
+
+            console.log(`\n🎉 MINT COMPLETE SUCCESSFULLY!`);
+            console.log(`   Tokens: ${reservedTokens.join(', ')}`);
+            console.log(`   Owner: ${userAccountId}`);
+            console.log(`   Transaction: ${mintResult.transactionId}`);
+
+            return {
+                success: true,
+                tokens: reservedTokens,
+                serialNumbers: mintResult.serialNumbers || [mintResult.serialNumber],
+                transactionId: mintResult.transactionId,
+                githubCommitted: true
+            };
+
+        } catch (error) {
+            console.error(`\n❌ MINT FAILED:`, error.message);
+
+            // ========== ROLLBACK LOGIC ==========
+            if (reservedTokens && !mintResult) {
+                // Phase 1 succeeded but Phase 2 failed
+                console.log(`↩️ Rolling back GitHub reservation...`);
+                try {
+                    await this.tierService.rollbackMint(rarity, reservedTokens);
+                    console.log(`✅ GitHub rollback successful`);
+                } catch (rollbackError) {
+                    console.error(`🚨 CRITICAL: GitHub rollback failed!`);
+                    console.error(`   Tokens ${reservedTokens.join(', ')} need manual cleanup`);
+                    throw new Error(`Mint failed AND GitHub rollback failed. Emergency!`);
+                }
+            }
+
+            throw error;
+        }
+    }
 
     /**
      * Load minting history from file

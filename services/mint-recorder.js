@@ -1,6 +1,7 @@
 const fs = require('fs').promises;
 const path = require('path');
 const { updateFileOnGitHub } = require('./githubHelper');
+const githubSyncService = require('./github-sync-service');
 
 class MintRecorder {
     constructor() {

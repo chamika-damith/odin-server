@@ -61,5 +61,16 @@
     "hbarUsdRate": 0.12939,
     "timestamp": "2025-12-11T15:08:00.623Z",
     "normalizedHash": "0.0.10174943-1765465666-522243064"
+  },
+  "0.0.7464168@1765874810.897591225": {
+    "userAccountId": "0.0.7464168",
+    "rarity": "common",
+    "quantity": 1,
+    "amountHbar": 0.88088447,
+    "timestamp": "2025-12-16T08:47:04.884Z",
+    "status": "minted",
+    "serialNumbers": [
+      null
+    ]
   }
 }

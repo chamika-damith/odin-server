@@ -17,7 +17,7 @@ async function deployNFT() {
     console.log("📝 Account:", process.env.OPERATOR_ID);
 
     // 2. CLIENT CONFIGURATION
-    const client = Client.forMainnet();
+    const client = Client.forTestnet();
 
     try {
         // FIXED KEY PARSING - HANDLES 0x ECDSA FORMAT

@@ -18,7 +18,7 @@ async function deployNFT() {
     console.log("📝 Account:", process.env.OPERATOR_ID);
 
     // 2. FIXED CLIENT CONFIGURATION
-    const client = Client.forMainnet();
+    const client = Client.forTestnet();
 
     try {
         // TRY ALL KEY FORMATS - ONE WILL WORK

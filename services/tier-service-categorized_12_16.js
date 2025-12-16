@@ -33,8 +33,65 @@ class TierServiceCategorized {
         // ✅ Load synchronously in constructor
         this.loadAllDataSync();
         console.log('✅ TierServiceCategorized initialized');
+
+        this.mintLock = false;
+        this.lockAcquiredAt = null;  // ⬅️ NEW LINE
     }
 
+    /**
+     * Thread-safe wrapper with timeout protection
+     */
+    async getNextTokenIdSafe(tier, quantity = 1) {
+        const startTime = Date.now();
+        const maxWaitTime = 30000; // 30 seconds max wait
+
+        // Wait if another mint is in progress (with timeout)
+        while (this.mintLock) {
+            const elapsed = Date.now() - startTime;
+
+            // Check if we've waited too long
+            if (elapsed > maxWaitTime) {
+                console.error(`⏰ Mint lock timeout after ${elapsed}ms`);
+                console.error(`   Lock was acquired at: ${this.lockAcquiredAt}`);
+                console.error(`   Trying to mint: ${tier} x${quantity}`);
+
+                throw new Error(`Mint timeout: System is busy. Please try again in a moment.`);
+            }
+
+            // Wait 100ms before checking again
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            // Log every 5 seconds so we know someone is waiting
+            if (elapsed % 5000 < 100) {
+                console.log(`⏳ Waiting for mint lock... (${Math.floor(elapsed / 1000)}s elapsed)`);
+            }
+        }
+
+        try {
+            // Acquire lock
+            this.mintLock = true;
+            this.lockAcquiredAt = new Date().toISOString();
+
+            console.log(`🔒 Lock acquired for ${tier} x${quantity} at ${this.lockAcquiredAt}`);
+
+            // Get the next token IDs
+            const result = await this.getNextTokenId(tier, quantity);
+
+            console.log(`✅ Token IDs reserved, lock will be released`);
+
+            return result;
+
+        } catch (error) {
+            console.error(`❌ Error while lock held:`, error.message);
+            throw error;
+
+        } finally {
+            // Always unlock, even if error occurs
+            this.mintLock = false;
+            this.lockAcquiredAt = null;
+            console.log(`🔓 Lock released`);
+        }
+    }
 
     loadAllDataSync() {
         try {
@@ -218,9 +275,6 @@ class TierServiceCategorized {
         }
     }
 
-    /**
-     * Get next available token ID for a tier
-     */
     async getNextTokenId(tier, quantity = 1) {
         const tierKey = tier.toLowerCase();
 
@@ -228,14 +282,18 @@ class TierServiceCategorized {
             throw new Error(`Invalid tier: ${tier}`);
         }
 
+        // ✅ FIX: Reload tracker to get latest nextIndex
+        this.loadMintedTrackerSync();
+
         let startIndex = this.mintedTracker.nextIndex[tierKey] || 0;
         const availableTokens = this.rarityMapping[tierKey];
 
+        console.log(`🔍 getNextTokenId: tier=${tierKey}, startIndex=${startIndex}, totalTokens=${availableTokens.length}`);
+
         if (startIndex + quantity > availableTokens.length) {
-            throw new Error(`Not enough ${tier} tokens available`);
+            throw new Error(`Not enough ${tier} tokens available. Requested: ${quantity}, Available: ${availableTokens.length - startIndex}`);
         }
 
-        // FIX: Get the actual token IDs
         const metadataTokenIds = [];
         for (let i = 0; i < quantity; i++) {
             metadataTokenIds.push(availableTokens[startIndex + i]);
@@ -243,8 +301,9 @@ class TierServiceCategorized {
 
         console.log(`🎯 Next ${quantity} ${tier} token(s):`, metadataTokenIds);
 
-        // ✅ INCREMENT nextIndex so next mint gets different tokens
+        // ✅ FIX: Update nextIndex IMMEDIATELY and save
         this.mintedTracker.nextIndex[tierKey] = startIndex + quantity;
+        this.saveMintedTrackerSync();
 
         return {
             metadataTokenIds: metadataTokenIds,
@@ -296,9 +355,6 @@ class TierServiceCategorized {
         return tokensToReserve;
     }
 
-    /**
-     * Mark tokens as successfully minted
-     */
     async markAsMinted(tier, tokenIds) {
         const tierKey = tier.toLowerCase();
 
@@ -306,11 +362,23 @@ class TierServiceCategorized {
             tokenIds = [tokenIds];
         }
 
-        // Add to minted list
-        this.mintedTracker[tierKey].push(...tokenIds);
+        // Reload from disk first to avoid race conditions
+        this.loadMintedTrackerSync();
+
+        // Add to minted list (avoid duplicates)
+        for (const tokenId of tokenIds) {
+            if (!this.mintedTracker[tierKey].includes(tokenId)) {
+                this.mintedTracker[tierKey].push(tokenId);
+            }
+        }
+
+        // ✅ FIX: Update nextIndex to match the minted count
+        this.mintedTracker.nextIndex[tierKey] = this.mintedTracker[tierKey].length;
+
+        console.log(`📊 Updated ${tierKey} nextIndex to: ${this.mintedTracker.nextIndex[tierKey]}`);
 
         // Save to file
-        await this.saveMintedTracker();
+        this.saveMintedTrackerSync();
 
         console.log(`✅ Marked ${tokenIds.length} ${tier} token(s) as minted:`, tokenIds);
     }
